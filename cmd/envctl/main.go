@@ -58,7 +58,7 @@ func root() *cobra.Command {
 	pf.BoolVar(&g.jsonOut, "json", false, "print machine-readable JSON")
 
 	cmd.AddCommand(upCmd(g), downCmd(g), stopCmd(g), startCmd(g), statusCmd(g), renderCmd(g),
-		logsCmd(g), execCmd(g), listCmd(g), initCmd(g), hookCmd(g))
+		logsCmd(g), execCmd(g), listCmd(g), initCmd(g), hookCmd(g), agentCmd(g))
 	return cmd
 }
 

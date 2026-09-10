@@ -1,0 +1,54 @@
+---
+title: Environment identity
+description: Design note. An environment has a name; the branch is an attribute it can be linked to and unlinked from.
+---
+
+Status: decided 10 September 2026, to be implemented at the start of milestone 2, before any VM backend code.
+
+## Problem
+
+Milestone 1 makes the git branch the identity of an environment. That is right for the common case and wrong for three things the team wants: a remote environment that outlives a branch, an environment that can be re-pointed at a different branch, and more than one environment for one branch.
+
+## Decision
+
+An environment is named. The name is the identity everywhere: compose project, rendered directory, labels, EC2 tags, DNS. The branch is an attribute called the linked branch. It says which branch's pushes update the environment and which checkout `envctl` operates on locally.
+
+The default name is the branch slug, so `envctl up` in a worktree behaves exactly as it does today. Nothing in the manifest changes.
+
+## Shape
+
+```bash
+envctl up                                  # env named after the branch, linked to it
+envctl up --env scratch                    # a second env on this branch, unlinked
+envctl env create preview-billing --branch feat/billing
+envctl env link preview-billing feat/billing-v2   # re-point; next push updates it
+envctl env unlink preview-billing          # keep it, stop following any branch
+envctl env list                            # name, backend, linked branch, dataset, state
+envctl env rm preview-billing              # destroy
+```
+
+`--env` replaces `--feature`; `--feature` stays as a deprecated alias for one release. Names follow the same slug rules as today: lowercase, `a-z0-9-`, at most 40 characters, unique per project prefix per backend.
+
+## What is recorded
+
+| Where | What |
+| --- | --- |
+| `.envctl/<env>/env.json` (local) | name, backend, linked branch, dataset, parent env, created at |
+| EC2 tags (vm) | `envctl:project`, `envctl:env`, `envctl:branch` |
+| `s3://<bucket>/envs/<env>/env.json` (vm) | the same document, so state survives an instance rebuild |
+| Container labels | `dev.envctl.env` replaces `dev.envctl.feature`; the old label is written too for one release |
+
+There is still no server. `envctl env list` reconciles tags, labels, and the JSON documents.
+
+## How linking drives CI
+
+The preview workflow keys on environment name, not branch. On a push to branch B it asks which environments are linked to B and runs `envctl up --backend vm --env <name> --tag <sha>` for each. A PR labelled `preview` with no linked environment gets one named after the branch. Merge or close destroys environments linked to that branch unless they were explicitly created with `env create`, which marks them as kept; those are only removed by `env rm` or the reaper's staleness rule.
+
+## Consequences for the current code
+
+- `provider.Spec.Feature` becomes `Env`; `feature.Detect` becomes the default-name resolver.
+- The rendered directory stays `.envctl/<env>/`.
+- Labels gain `dev.envctl.env`.
+- The `WorktreeCreate` hook is unchanged: a Claude worktree gets an environment named after its branch.
+
+This is a rename while milestone 1 is fresh and a migration after milestone 3 ships, which is why it goes first.

@@ -1,0 +1,66 @@
+---
+title: CI
+description: Validate a repository's environment on every pull request, install envctl in any workflow, and cut releases.
+---
+
+envctl ships three GitHub Actions pieces. Two are for repositories that use envctl; one is for releasing envctl itself.
+
+## Validate on every pull request
+
+The reusable workflow renders the environment with a fixed feature name and checks the result with compose. It needs no running stack, so it is fast and cheap, and it fails when a compose file no longer loads, the manifest points at a missing file, or a service publishes a port in a way the port modes cannot rewrite.
+
+Add to the application repository:
+
+```yaml
+# .github/workflows/envctl.yml
+name: envctl
+on:
+  pull_request:
+jobs:
+  validate:
+    uses: sam-bretz/envctl/.github/workflows/validate.yml@main
+    with:
+      working-directory: .
+      port-mode: registry
+    secrets:
+      token: ${{ secrets.ENVCTL_TOKEN }}
+```
+
+The job writes the project name and env lines to the run summary and uploads the rendered compose file as an artifact for seven days.
+
+| Input | Default | Meaning |
+| --- | --- | --- |
+| `version` | `latest` | envctl release to install. |
+| `working-directory` | `.` | Directory containing `envctl.yaml`. |
+| `port-mode` | `registry` | `registry` exercises port rewriting on the runner; `domains` checks that stripping works. |
+| secret `token` | job token | A token that can read envctl releases. Required while the envctl repository is private. |
+
+## Use envctl in your own workflow
+
+The composite action installs the binary and puts it on `PATH`:
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - uses: sam-bretz/envctl@main
+    with:
+      version: latest
+      token: ${{ secrets.ENVCTL_TOKEN }}
+  - run: envctl --feature ci render --json
+```
+
+Ubuntu runners have Docker, so `envctl up` also works inside a job for integration tests that need the stack; the environment lives only as long as the job. Long-lived per-branch environments are the VM backend on the [Roadmap](/docs/roadmap/).
+
+## Access while the repository is private
+
+Reusable workflows and actions from a private repository are only reachable from repositories in the same account, and only after **Settings, Actions, General, Access** on the envctl repository allows it. Release downloads additionally need a token with read access to envctl; store a fine-grained token with contents read permission as `ENVCTL_TOKEN` in each consuming repository. Once envctl is public, drop the secret and the default job token is enough.
+
+## Releasing envctl
+
+Pushing a `v*` tag runs `release.yml`, which tests, builds `darwin` and `linux` binaries for `amd64` and `arm64`, bundles the worktree hook scripts and the agent skill into each archive, writes checksums, and creates a GitHub release with generated notes.
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+The binary reports the tag through `envctl --version`.

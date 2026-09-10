@@ -20,19 +20,26 @@ type Provider struct {
 	Manifest     *manifest.Manifest
 	Host         dockerx.Host
 	RegistryPath string
+
+	// hostErr records a failed Docker detection. Render works without Docker
+	// (CI validation, offline inspection); every other operation reports it.
+	hostErr error
 }
 
-// New detects the Docker host and returns a local provider.
+// New detects the Docker host and returns a local provider. A missing daemon
+// is not fatal here so that Render can run on hosts without Docker.
 func New(ctx context.Context, m *manifest.Manifest) (*Provider, error) {
-	host, err := dockerx.DetectHost(ctx)
-	if err != nil {
-		return nil, err
-	}
 	rp, err := ports.DefaultPath()
 	if err != nil {
 		return nil, err
 	}
-	return &Provider{Manifest: m, Host: host, RegistryPath: rp}, nil
+	p := &Provider{Manifest: m, RegistryPath: rp}
+	p.Host, p.hostErr = dockerx.DetectHost(ctx)
+	return p, nil
+}
+
+func (p *Provider) requireDocker() error {
+	return p.hostErr
 }
 
 // Mode resolves the manifest's port mode against the detected host.
@@ -101,6 +108,9 @@ func (p *Provider) Render(ctx context.Context, spec provider.Spec) (*provider.St
 
 // Up renders and converges the environment.
 func (p *Provider) Up(ctx context.Context, spec provider.Spec) (*provider.Status, error) {
+	if err := p.requireDocker(); err != nil {
+		return nil, err
+	}
 	res, _, err := p.render(ctx, spec)
 	if err != nil {
 		return nil, err
@@ -120,6 +130,9 @@ func (p *Provider) Up(ctx context.Context, spec provider.Spec) (*provider.Status
 
 // Down stops and removes the environment; volumes optionally.
 func (p *Provider) Down(ctx context.Context, spec provider.Spec, volumes bool) error {
+	if err := p.requireDocker(); err != nil {
+		return err
+	}
 	file, err := p.renderedFile(ctx, spec)
 	if err != nil {
 		return err
@@ -144,6 +157,9 @@ func (p *Provider) Down(ctx context.Context, spec provider.Spec, volumes bool) e
 
 // Stop pauses the environment without removing containers or data.
 func (p *Provider) Stop(ctx context.Context, spec provider.Spec) error {
+	if err := p.requireDocker(); err != nil {
+		return err
+	}
 	file, err := p.renderedFile(ctx, spec)
 	if err != nil {
 		return err
@@ -153,6 +169,9 @@ func (p *Provider) Stop(ctx context.Context, spec provider.Spec) error {
 
 // Start resumes a stopped environment.
 func (p *Provider) Start(ctx context.Context, spec provider.Spec) error {
+	if err := p.requireDocker(); err != nil {
+		return err
+	}
 	file, err := p.renderedFile(ctx, spec)
 	if err != nil {
 		return err
@@ -162,6 +181,9 @@ func (p *Provider) Start(ctx context.Context, spec provider.Spec) error {
 
 // Status reconciles the rendered files with what Docker reports.
 func (p *Provider) Status(ctx context.Context, spec provider.Spec) (*provider.Status, error) {
+	if err := p.requireDocker(); err != nil {
+		return nil, err
+	}
 	res, err := p.loadRendered(spec)
 	if err != nil {
 		return nil, err
@@ -171,6 +193,9 @@ func (p *Provider) Status(ctx context.Context, spec provider.Spec) (*provider.St
 
 // Logs streams service logs.
 func (p *Provider) Logs(ctx context.Context, spec provider.Spec, follow bool, services ...string) error {
+	if err := p.requireDocker(); err != nil {
+		return err
+	}
 	file, err := p.renderedFile(ctx, spec)
 	if err != nil {
 		return err
@@ -185,6 +210,9 @@ func (p *Provider) Logs(ctx context.Context, spec provider.Spec, follow bool, se
 
 // Exec runs a command in a service container.
 func (p *Provider) Exec(ctx context.Context, spec provider.Spec, service string, args ...string) error {
+	if err := p.requireDocker(); err != nil {
+		return err
+	}
 	file, err := p.renderedFile(ctx, spec)
 	if err != nil {
 		return err

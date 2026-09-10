@@ -18,6 +18,7 @@ export default defineConfig({
           { label: 'How to work with envctl', slug: 'how-to-work' },
           { label: 'Agents', slug: 'agents' },
           { label: 'Agent automation', slug: 'agent-automation' },
+          { label: 'CI', slug: 'ci' },
           { label: 'Troubleshooting', slug: 'troubleshooting' },
         ]},
         { label: 'Reference', items: [
@@ -25,6 +26,10 @@ export default defineConfig({
           { label: 'Config reference', slug: 'config-reference' },
           { label: 'CLI reference', slug: 'cli-reference' },
           { label: 'Roadmap', slug: 'roadmap' },
+        ]},
+        { label: 'Design notes', items: [
+          { label: 'Environment identity', slug: 'design/env-identity' },
+          { label: 'External dependencies', slug: 'design/external-dependencies' },
         ]},
       ],
     }),

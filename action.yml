@@ -1,0 +1,32 @@
+name: Set up envctl
+description: Install the envctl binary and put it on PATH for later steps.
+inputs:
+  version:
+    description: Release tag to install (for example v0.1.0), or "latest".
+    default: latest
+  token:
+    description: Token that can read releases of sam-bretz/envctl. Needed while the repo is private; defaults to the job token.
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - name: Download envctl
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        os=$(uname -s | tr '[:upper:]' '[:lower:]')
+        arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; esac
+        dest="$RUNNER_TEMP/envctl"; mkdir -p "$dest"
+        pattern="envctl_${os}_${arch}.tar.gz"
+        if [ "$VERSION" = "latest" ]; then
+          gh release download --repo sam-bretz/envctl --pattern "$pattern" --dir "$dest"
+        else
+          gh release download "$VERSION" --repo sam-bretz/envctl --pattern "$pattern" --dir "$dest"
+        fi
+        tar -xzf "$dest/$pattern" -C "$dest"
+        chmod +x "$dest/envctl" "$dest"/envctl-worktree-* || true
+        echo "$dest" >> "$GITHUB_PATH"
+        "$dest/envctl" --version

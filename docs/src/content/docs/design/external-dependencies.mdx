@@ -1,0 +1,90 @@
+---
+title: External dependencies
+description: Design note. A manifest section that declares the external systems an environment needs, how it gets credentials, and which services receive them.
+---
+
+Status: decided 10 September 2026, to be built in milestone 2 alongside datasets, because both need the same secrets plumbing.
+
+## Problem
+
+A stack rarely stands alone. It needs a payments sandbox, a real bucket, an auth provider, or an emulator such as LocalStack. Today the only lever is `stack.env_files`, which mixes secrets with configuration, says nothing about which environment gets which credentials, and cannot be enabled or checked per environment.
+
+## Decision
+
+The manifest gains a `dependencies` list. Each entry names one external system, says how an environment obtains credentials for it, and says which services are injected with them. There are three kinds.
+
+| Kind | Meaning | Example |
+| --- | --- | --- |
+| `external` | A real system reached over the network with per-environment credentials. | Stripe test account, a real S3 bucket with a per-env prefix, Auth0 tenant |
+| `emulator` | A stand-in that runs as extra compose services inside the environment. | LocalStack, a mail catcher, a fake OIDC provider |
+| `exec` | A script in the repo that produces the variables. The escape hatch for bespoke systems. | Minting a short-lived token from an internal service |
+
+## Shape
+
+```yaml
+dependencies:
+  - name: stripe
+    kind: external
+    enabled: true
+    secrets:
+      STRIPE_SECRET_KEY: ssm:/envctl/{project}/{env}/stripe/secret_key
+      STRIPE_WEBHOOK_SECRET: ssm:/envctl/{project}/shared/stripe/webhook_secret
+    inject:
+      services: [api, worker]
+    probe:
+      http: https://api.stripe.com/v1/balance
+      auth: bearer:STRIPE_SECRET_KEY
+
+  - name: aws
+    kind: emulator
+    compose: deploy/local/localstack.compose.yml
+    inject:
+      services: [api, worker, bootstrap]
+      env:
+        METERGRAPH_CLOUD: localstack
+    seed: dataset            # the dataset service restores this emulator's state
+
+  - name: internal-token
+    kind: exec
+    command: scripts/envctl-token.sh
+    inject:
+      services: [api]
+```
+
+### Secrets sources
+
+| Prefix | Resolved from | Works |
+| --- | --- | --- |
+| `ssm:` | AWS Systems Manager Parameter Store, with `{project}` and `{env}` templated | local with AWS credentials, vm through the instance role |
+| `env:` | the developer's shell | local only |
+| `file:` | a gitignored file relative to the repo root | local only |
+
+Resolved values are written to `.envctl/<env>/secrets.env` with mode 0600 and referenced from the rendered project through `env_file`. They never appear in `compose.yaml`. On a VM the file is delivered over SSM together with the rendered project. A dependency that cannot resolve a secret fails `envctl up` with the missing key named, before any container starts.
+
+### Commands
+
+```bash
+envctl dep list               # name, kind, enabled, resolved?, last probe
+envctl dep enable stripe      # per environment; recorded in env.json
+envctl dep disable stripe
+envctl dep check              # run every probe, non-zero if any fails
+envctl up --with stripe       # enable for this run only
+```
+
+`envctl status --json` gains a `dependencies` array with the same fields as `dep list`, so an agent can see whether the environment it is about to test against actually has its external systems.
+
+## Emulators and datasets
+
+An emulator is a compose file included in the render when the dependency is enabled, so it is namespaced, labelled, and torn down like any other service. The dataset service treats an emulator with `seed: dataset` as part of the environment's state: `snapshot` exports it and `seed` restores it. LocalStack today becomes the first emulator entry rather than a hardcoded part of the stack.
+
+## Extensibility
+
+The three kinds cover the cases we know. `exec` is deliberately the only plugin mechanism at first: a script in the repository, run with the environment's JSON on stdin, printing `KEY=VALUE` lines. If a fourth pattern shows up more than twice, it becomes a kind. This keeps the manifest declarative and avoids a plugin API before there are plugins.
+
+## Consequences for the current code
+
+- `manifest` gains the `dependencies` type with validation.
+- `compose.Render` learns to include emulator files and attach an `env_file` per injected service.
+- A new `internal/secrets` package resolves the three prefixes.
+- The env file gains `ENVCTL_DEP_<NAME>=enabled|disabled`.
+- The VM backend, when it arrives, ships `secrets.env` alongside `compose.yaml`; nothing else about dependencies is backend-specific.

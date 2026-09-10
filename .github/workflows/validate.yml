@@ -1,0 +1,69 @@
+# Reusable workflow: render a repository's envctl environment on every PR so a
+# compose file that no longer loads, a manifest pointing at a missing file, or
+# an unrewritable host port fails in CI instead of in someone's worktree.
+#
+# Caller example (.github/workflows/envctl.yml in the app repo):
+#
+#   on: [pull_request]
+#   jobs:
+#     validate:
+#       uses: sam-bretz/envctl/.github/workflows/validate.yml@main
+#       with:
+#         working-directory: .
+#       secrets:
+#         token: ${{ secrets.ENVCTL_TOKEN }}   # only while envctl is private
+name: envctl validate
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: envctl release tag or "latest".
+        type: string
+        default: latest
+      working-directory:
+        description: Directory containing envctl.yaml.
+        type: string
+        default: .
+      port-mode:
+        description: Port mode to render with (registry exercises port rewriting; domains strips ports).
+        type: string
+        default: registry
+    secrets:
+      token:
+        description: Token able to read envctl releases. Optional once the repo is public.
+        required: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: sam-bretz/envctl@main
+        with:
+          version: ${{ inputs.version }}
+          token: ${{ secrets.token || github.token }}
+      - name: Render the environment
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          set -euo pipefail
+          envctl --feature ci --port-mode "${{ inputs.port-mode }}" render --json > "$RUNNER_TEMP/render.json"
+          {
+            echo "### envctl render"
+            echo
+            echo '| Field | Value |'
+            echo '| --- | --- |'
+            jq -r '"| project | `\(.project)` |", "| rendered | `\(.rendered)` |"' "$RUNNER_TEMP/render.json"
+            echo
+            echo '```'
+            jq -r '.env[]' "$RUNNER_TEMP/render.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Check the rendered file with compose
+        working-directory: ${{ inputs.working-directory }}
+        run: docker compose -p mg-ci -f .envctl/ci/compose.yaml config --quiet
+      - uses: actions/upload-artifact@v4
+        with:
+          name: envctl-rendered
+          path: ${{ inputs.working-directory }}/.envctl/ci/
+          retention-days: 7

@@ -77,6 +77,15 @@ envctl hook claude
 
 `hook claude` prints the `hooks` block to merge into `.claude/settings.json`. See [Agents](/docs/agents/).
 
+## Agent skill
+
+```bash
+envctl agent install [--global]
+envctl agent snippet
+```
+
+`agent install` copies the embedded skill (`SKILL.md` and `REFERENCE.md`) into `.claude/skills/envctl/` and `.agents/skills/envctl/` at the worktree root, then prints the `CLAUDE.md` paragraph. `--global` writes to `~/.claude/skills`, `~/.agents/skills`, and `~/.codex/skills` instead. `agent snippet` prints only the paragraph. See [Agents](/docs/agents/).
+
 ## Exit codes
 
 `0` on success. `1` on any failure, with a one-line reason on stderr prefixed `envctl:`. Compose's own exit code is passed through when compose fails.

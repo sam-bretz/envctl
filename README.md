@@ -12,9 +12,11 @@ allocated from a local registry.
 ## Status
 
 Milestone 1 (local backend) is usable: `up`, `down`, `stop`, `start`, `status`,
-`render`, `logs`, `exec`, `list`, `init`, and Claude Code worktree hooks.
-Datasets (milestone 2), the EC2 per-branch backend and GitHub Actions
-workflows (milestone 3+) are not built yet. See `internal/provider` for the
+`render`, `logs`, `exec`, `list`, `init`, `agent install`, Claude Code worktree
+hooks, a reusable PR validation workflow, and a release workflow.
+Environment identity, datasets and external dependencies (milestone 2), the
+EC2 per-environment backend (milestone 3), promote, the agent supervisor
+(milestone 4) and the rest are not built yet; see `docs/` roadmap and design notes. See `internal/provider` for the
 interface those backends implement.
 
 ## Docs
@@ -57,6 +59,20 @@ Host tooling reads `.envctl/<feature>/env`:
 The rendered file is written to `.envctl/<feature>/compose.yaml` and run with
 plain `docker compose`, so anything you can do with compose still works.
 
+## Agents
+
+    envctl agent install      # skill into .claude/skills and .agents/skills (Claude Code, Codex, ...)
+    envctl agent snippet      # paragraph for CLAUDE.md / AGENTS.md
+
+The skill source is `skills/envctl/`; `npx skills add sam-bretz/envctl` also works.
+
+## CI
+
+    uses: sam-bretz/envctl@main                                   # composite action: install the binary
+    uses: sam-bretz/envctl/.github/workflows/validate.yml@main    # render + compose config on every PR
+
+Tag `v*` to build release binaries. See `docs/src/content/docs/ci.mdx`.
+
 ## Claude Code
 
     envctl hook claude >> .claude/settings.json   # merge by hand if hooks exist
@@ -75,3 +91,6 @@ plain `docker compose`, so anything you can do with compose still works.
     internal/provider       backend interface
     internal/backend/local  local Docker host backend
     hooks/claude            worktree hooks
+    skills/envctl           agent skill (SKILL.md + REFERENCE.md), embedded in the binary
+    action.yml              composite action: install envctl in a job
+    .github/workflows       ci (this repo), validate (reusable), release (tags)

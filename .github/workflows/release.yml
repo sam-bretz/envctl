@@ -1,0 +1,41 @@
+# Build release binaries for a v* tag and attach them to a GitHub release.
+# The setup action (action.yml) downloads these by platform.
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+      - name: Build archives
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+            os=${target%/*}; arch=${target#*/}
+            out="dist/envctl_${os}_${arch}"; mkdir -p "$out"
+            GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -trimpath \
+              -ldflags "-s -w -X main.version=${TAG}" -o "$out/envctl" ./cmd/envctl
+            cp hooks/claude/envctl-worktree-create hooks/claude/envctl-worktree-remove "$out/"
+            cp -R skills/envctl "$out/skill"
+            tar -C "$out" -czf "$out.tar.gz" .
+          done
+          (cd dist && shasum -a 256 *.tar.gz > checksums.txt)
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/*.tar.gz dist/checksums.txt --title "$TAG" --generate-notes

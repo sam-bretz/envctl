@@ -21,7 +21,8 @@ envctl gives each git worktree its own isolated docker-compose environment. It r
    ```
    `project` must match `^[a-z][a-z0-9-]{0,15}$`. Every `stack.files` path must exist.
 3. Add `.envctl/` to `.gitignore`.
-4. Optional, for Claude Code worktrees: put `hooks/claude/envctl-worktree-create` and `envctl-worktree-remove` on PATH and merge the output of `envctl hook claude` into `.claude/settings.json`. Both need `jq`.
+4. Install the skill for agents: `envctl agent install` (writes `.claude/skills/envctl/` and `.agents/skills/envctl/`), then add the paragraph from `envctl agent snippet` to CLAUDE.md and AGENTS.md.
+5. Optional, for Claude Code worktrees: put `hooks/claude/envctl-worktree-create` and `envctl-worktree-remove` on PATH and merge the output of `envctl hook claude` into `.claude/settings.json`. Both need `jq`.
 
 ## Commands
 
@@ -52,3 +53,17 @@ Never assume a fixed port like `localhost:5433`. Always read `envctl status --js
 - OrbStack name does not resolve: enable "Allow access to container domains & IPs" in OrbStack settings.
 - `has not been rendered`: run `envctl up` or `envctl render` first.
 - To see exactly what compose runs: `docker compose -f .envctl/<feature>/compose.yaml config`.
+
+## CI
+
+`envctl render` does not need Docker. Add to a repo's workflow:
+
+```yaml
+jobs:
+  validate:
+    uses: sam-bretz/envctl/.github/workflows/validate.yml@main
+    secrets:
+      token: ${{ secrets.ENVCTL_TOKEN }}
+```
+
+or install the binary in any job with `uses: sam-bretz/envctl@main`.

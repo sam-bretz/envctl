@@ -44,16 +44,41 @@ If the environment fails to start, the worktree is still returned and a message 
 
 It runs `envctl down --volumes` in the worktree and always exits 0, so cleanup never blocks Claude Code.
 
+## Install the skill
+
+envctl ships a skill in the cross-agent `SKILL.md` format. Claude Code reads it from `.claude/skills/`, Codex and other agents from `.agents/skills/`. Install it into a repository:
+
+```bash
+envctl agent install
+```
+
+```text
+installed /path/to/repo/.claude/skills/envctl/SKILL.md
+installed /path/to/repo/.agents/skills/envctl/SKILL.md
+```
+
+Commit those directories so every worktree and every teammate's agent gets the skill. For a user-level install that covers every repository, use `envctl agent install --global`, which also writes `~/.codex/skills/envctl/`.
+
+The skill tells an agent to use `envctl` for lifecycle, to read `envctl status --json` before connecting to anything, how to address another worktree with `-C`, and what to do when the common errors appear. `REFERENCE.md` next to it carries the full command, manifest, and env file reference so the agent never has to guess.
+
+The same files live at `skills/envctl/` in the envctl repo, so `npx skills add sam-bretz/envctl` works for teams that manage skills that way.
+
 ## What an agent should know
 
-Add a short note to `CLAUDE.md` so agents use the environment instead of guessing:
+Skills load on demand; a short standing note in `CLAUDE.md` and `AGENTS.md` makes sure the agent knows the environment exists before it reaches for `docker compose`. Print it with:
+
+```bash
+envctl agent snippet
+```
 
 ```markdown
-## Local services
-This worktree has its own docker-compose environment managed by envctl.
-Run `envctl status --json` to find service hosts and ports. Never assume
-localhost:5433. Do not run `docker compose` directly; use `envctl up`,
-`envctl logs`, and `envctl exec`.
+## Local services (envctl)
+
+This repository's docker-compose stack is managed by envctl. Every git
+worktree has its own isolated environment. Run `envctl up` to start it
+and `envctl status --json` to find service hosts and ports. Never run
+`docker compose` directly on the repo's compose files and never assume a
+fixed port such as localhost:5433. See the envctl skill for details.
 ```
 
 Every command accepts `--json`, and `status --json` includes the env file lines, so an agent can read connection details in one call. See [Agent automation](/docs/agent-automation/).

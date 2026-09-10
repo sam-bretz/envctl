@@ -3,28 +3,42 @@ title: Roadmap
 description: What is built, what is next, and the design rule that holds across milestones.
 ---
 
-envctl is built in milestones that are each useful on their own. Milestone 1 is done; the rest are ordered by what unblocks the next.
+envctl is built in milestones that are each useful on their own. Milestone 1 is done. The order below was revised on 10 September 2026 to put environment identity and external dependencies before the VM backend, and to make agents running inside an environment a milestone of its own.
 
 ## Milestone 1: local isolation
 
-Done. Compose project per branch, domains and registry port modes, labels, env file, Claude Code worktree hooks, JSON output on every command.
+Done. Compose project per branch, domains and registry port modes, labels, env file, Claude Code worktree hooks, JSON output on every command, agent skill with `agent install`, PR validation workflow, release workflow.
 
-## Milestone 2: named datasets
+## Milestone 2: identity, datasets, dependencies
 
-`envctl snapshot <name>` dumps the environment's Postgres and a manifest of LocalStack buckets and queues to S3. `envctl seed <name>` restores them into an environment, then keeps a golden copy so `envctl reset` is a drop and create from template that takes seconds. The same dataset name works locally and on a VM. Anonymised production snapshots come from a scheduled job using Greenmask.
+Three pieces that all answer "what does this environment need to function", done together because they share the same manifest and secrets plumbing.
 
-## Milestone 3: a VM per branch
+**Environment identity.** An environment gets a name of its own and a linked branch as an attribute, instead of the branch being the identity. The default name is still the branch slug, so nothing changes for the common case, but an environment can now be created, linked to a different branch, unlinked, and kept. See [Environment identity](/docs/design/env-identity/).
 
-A `vm` backend that runs the same compose file on one EC2 instance per feature. Rendered files are delivered over SSM, images pull from ECR, Caddy terminates TLS with a wildcard certificate at `<branch>.preview.<domain>`, and only port 443 is open. GitHub Actions creates the environment on the first push of a branch with a PR, updates it on every push, and destroys it on merge or close.
+**Named datasets.** `envctl snapshot <name>` dumps Postgres and a manifest of LocalStack state to S3. `envctl seed <name>` restores them and keeps a golden copy so `envctl reset` is a drop and create from template. The same dataset name works locally and on a VM. Anonymised production snapshots come from a scheduled job using Greenmask.
 
-## Milestone 4: sharing and hygiene
+**External dependencies.** A `dependencies` section in the manifest declares the external systems an environment needs, how each environment gets credentials for them, and which services receive them. Emulators such as LocalStack are the same concept with a compose file attached. See [External dependencies](/docs/design/external-dependencies/).
 
-oauth2-proxy in front of every preview so a URL is safe to paste to a teammate. Idle instances stop after a quiet day and start on the next push. A nightly reaper destroys instances whose branch is gone. A `workflow_dispatch` reseeds or snapshots an environment from the Actions tab.
+## Milestone 3: a VM per environment
 
-## Milestone 5: agents and the graph
+A `vm` backend that runs the same compose file on one EC2 instance per environment, keyed on the environment name. Rendered files and secrets are delivered over SSM, images pull from ECR, Caddy terminates TLS with a wildcard certificate at `<env>.preview.<domain>`, and only port 443 is open. GitHub Actions creates an environment on the first push of a branch with a PR, updates every environment linked to a branch when it is pushed, and destroys environments whose branch is merged or closed.
 
-An MCP server exposing status, logs, exec, seed, snapshot, and promote, so an agent can inspect its own environment and hand a teammate a preview link. Hooks for the workflow engine: provision when a node starts, snapshot when it finishes, and seed a child feature from its parent's latest snapshot by default.
+## Promote
+
+The first feature after milestone 3: `envctl promote` takes the environment you are looking at locally, snapshots its live data, pushes the branch, creates or updates the VM environment, and seeds it from that snapshot. One command from "works on my machine" to a URL a teammate can open.
+
+## Milestone 4: agent supervisor and worker
+
+An environment becomes a place where work happens, not only where software runs. A supervisor on the VM pulls tasks and spawns workers; a worker is a Claude Code or Codex session in a worktree on the VM, using envctl's local backend there. Credentials are scoped and delivered through SSM. Every task leaves a transcript and a diff, and a person can attach to a running worker. One environment per VM stays the rule, because a worker that can run Docker can reach every container on its host.
+
+## Milestone 5: sharing and hygiene
+
+oauth2-proxy in front of every environment so a URL is safe to paste to a teammate. Idle instances stop after a quiet day and start on the next push. A nightly reaper destroys environments whose branch is gone. A `workflow_dispatch` reseeds or snapshots an environment from the Actions tab.
+
+## Milestone 6: MCP and the graph
+
+An MCP server exposing status, logs, exec, seed, snapshot, promote, and task submission, so an agent can inspect its own environment, hand a teammate a link, or delegate to workers inside it. Hooks for the workflow engine: provision when a node starts, snapshot when it finishes, and seed a child environment from its parent's latest snapshot by default.
 
 ## The rule that holds
 
-The workflow engine and agents only ever call the provider interface in `internal/provider`. Docker, AWS, and datasets sit behind it. A backend can change without anything above it noticing.
+The workflow engine and agents only ever call the provider interface in `internal/provider`. Docker, AWS, datasets, and dependencies sit behind it. A backend can change without anything above it noticing.

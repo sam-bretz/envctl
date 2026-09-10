@@ -1,0 +1,76 @@
+---
+title: Quick start
+description: Add a manifest to a repository and start an isolated environment for the current branch.
+---
+
+If envctl is not installed yet, see [Install](/docs/install/). Then, from the root of a repository that has a compose file:
+
+```bash
+envctl init --project mg --file app/docker-compose.yml
+```
+
+This writes `envctl.yaml`. The project prefix becomes the first part of every compose project name, so keep it short. Add `.envctl/` to `.gitignore`; that is where rendered files go.
+
+## Start the environment
+
+```bash
+envctl up
+```
+
+envctl derives a feature name from your branch, renders an isolated copy of the stack, starts it, and waits for health checks. The output ends with the services, their endpoints, and the env file for host tooling:
+
+```text
+feature   fix-metergraph-capitalization
+project   mg-fix-metergraph-capitalization
+backend   local
+rendered  .envctl/fix-metergraph-capitalization/compose.yaml
+services
+  postgres             running    healthy
+env       source .envctl/fix-metergraph-capitalization/env
+```
+
+Run `envctl up` again any time. It converges the environment instead of failing because it already exists.
+
+## Reach a service
+
+On OrbStack, every service has a DNS name and no host port is published:
+
+```bash
+psql -h postgres.mg-fix-metergraph-capitalization.orb.local -U metergraph
+```
+
+Elsewhere, envctl allocates a stable loopback port per service and records it in the env file:
+
+```bash
+set -a; . .envctl/fix-metergraph-capitalization/env; set +a
+psql -h 127.0.0.1 -p "$ENVCTL_PORT_POSTGRES_5432" -U metergraph
+```
+
+`envctl status` prints both forms, and `envctl status --json` prints them for scripts.
+
+## Start a second one
+
+Check out another branch in a second worktree and run `envctl up` there. You now have two complete stacks with separate networks, volumes, and names:
+
+```bash
+envctl list
+```
+
+```text
+mg-fix-metergraph-capitalization                 running(1)
+mg-main                                          running(1)
+```
+
+## Stop, keep, or remove
+
+| Goal | Command |
+| --- | --- |
+| Pause, keep data | `envctl stop` then `envctl start` |
+| Remove containers, keep data | `envctl down` |
+| Remove everything including volumes and ports | `envctl down -v` |
+
+## Where next
+
+- [Concepts](/docs/concepts/) explains features, environments, and port modes.
+- [How to work with envctl](/docs/how-to-work/) covers Makefiles, native test runners, and several branches at once.
+- [Agents](/docs/agents/) wires Claude Code worktrees to environments.

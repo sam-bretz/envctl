@@ -1,0 +1,86 @@
+---
+title: Agent automation
+description: Drive envctl from scripts and agents with deterministic JSON output.
+---
+
+Every command that reports something accepts `--json`. Output is a single JSON document on stdout; progress from compose goes to stderr. Exit code is non-zero on failure with a one-line reason on stderr.
+
+## Status
+
+```bash
+envctl status --json
+```
+
+```json
+{
+  "feature": "feat-thing",
+  "project": "mg-feat-thing",
+  "backend": "local",
+  "running": true,
+  "services": [
+    { "name": "postgres", "state": "running", "health": "healthy" }
+  ],
+  "endpoints": [
+    { "service": "postgres", "target": 5432, "host": "127.0.0.1", "port": 41000 },
+    { "service": "api", "target": 8787, "host": "127.0.0.1", "port": 41001, "url": "http://127.0.0.1:41001/" }
+  ],
+  "env": [
+    "ENVCTL_FEATURE=feat-thing",
+    "ENVCTL_PROJECT=mg-feat-thing",
+    "ENVCTL_BACKEND=local",
+    "ENVCTL_PORT_MODE=registry",
+    "ENVCTL_HOST_API=127.0.0.1",
+    "ENVCTL_HOST_POSTGRES=127.0.0.1",
+    "ENVCTL_PORT_API_8787=41001",
+    "ENVCTL_PORT_POSTGRES_5432=41000"
+  ],
+  "rendered": "/path/to/worktree/.envctl/feat-thing/compose.yaml"
+}
+```
+
+In domains mode `endpoints` carry the `service.project.orb.local` host and the container port, and `url` entries come from the manifest's `expose` list.
+
+`envctl up --json` and `envctl render --json` print the same shape.
+
+## Pick a connection string
+
+```bash
+eval "$(envctl status --json | jq -r '.env[]' | sed 's/^/export /')"
+psql "postgres://metergraph@${ENVCTL_HOST_POSTGRES}:${ENVCTL_PORT_POSTGRES_5432:-5432}/metergraph"
+```
+
+## List environments
+
+```bash
+envctl list --json
+```
+
+```json
+[
+  { "Name": "mg-feat-thing", "Status": "running(1)", "ConfigFiles": "/path/.envctl/feat-thing/compose.yaml" },
+  { "Name": "mg-main", "Status": "exited(1)", "ConfigFiles": "/path/.envctl/main/compose.yaml" }
+]
+```
+
+The fields are Docker's own `compose ls` output filtered to this project's prefix.
+
+## Operate on another worktree
+
+```bash
+envctl -C /path/to/worktree status --json
+```
+
+`-C` changes the worktree envctl operates on, and the feature name follows that worktree's branch. Combine with `--feature` to address an environment whose worktree is gone.
+
+## Discover environments without envctl
+
+Every container carries labels, so any Docker client can find them:
+
+```bash
+docker ps --filter label=dev.envctl.project=mg-feat-thing --format '{{.Names}}'
+docker ps --filter label=dev.envctl.feature --format '{{.Label "dev.envctl.project"}}' | sort -u
+```
+
+## Coming later
+
+An MCP server exposing status, logs, exec, seed, snapshot, and promote is on the [Roadmap](/docs/roadmap/). Until then, agents call the CLI.

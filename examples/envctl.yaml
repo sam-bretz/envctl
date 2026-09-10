@@ -1,0 +1,14 @@
+# Place at the repository root. Every path is relative to this file.
+version: 1
+project: mg                     # prefix: compose projects become mg-<feature>
+stack:
+  files:
+    - deploy/local/docker-compose.yml
+  env_files: [".env"]           # optional; missing files are ignored
+  profiles: []
+ports:
+  mode: auto                    # auto: DNS on OrbStack, port registry elsewhere
+  range: [41000, 49999]         # registry range on hosts without container DNS
+expose:                         # printed as URLs by `envctl status`
+  - service: api
+    port: 8787

@@ -1,0 +1,65 @@
+---
+title: envctl documentation
+description: Isolated docker-compose environments per feature branch, for people and coding agents.
+template: splash
+hero:
+  tagline: "One stack per branch. Two people or ten agents on one machine, no port fights, no shared database."
+  actions:
+    - text: Install envctl
+      link: /docs/install/
+    - text: Quick start
+      link: /docs/quick-start/
+      variant: secondary
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## Pick your path
+
+<CardGrid>
+  <Card title="You run the stack by hand">
+    You already type `docker compose up`. envctl keeps that workflow and gives every worktree its own project, network, volumes, and ports.
+
+    [Quick start →](/docs/quick-start/)
+  </Card>
+  <Card title="You run coding agents in worktrees">
+    Two hooks make every Claude Code worktree self-provisioning: the environment starts when the worktree is created and is destroyed when it goes.
+
+    [Agents →](/docs/agents/)
+  </Card>
+</CardGrid>
+
+## Or let your agent introduce you
+
+Already running a coding agent in this repo? Paste this prompt:
+
+```text
+Help me set up envctl for this repository. Read docs/public/agent-guide.md in the envctl repo first, then walk me through it.
+```
+
+The guide teaches the agent the manifest, the commands, and the common fixes, so its answers stay accurate.
+
+## Core guides
+
+<CardGrid>
+  <Card title="Concepts">
+    Features, environments, port modes, and the rendered project, in two minutes.
+
+    [Understand the model →](/docs/concepts/)
+  </Card>
+  <Card title="Configuration">
+    Write `envctl.yaml`, choose a port mode, expose entrypoints, and point host tooling at the env file.
+
+    [Configure a repo →](/docs/configuration/)
+  </Card>
+  <Card title="CLI reference">
+    Every command, flag, and output shape, including `--json` for scripts and agents.
+
+    [Read the reference →](/docs/cli-reference/)
+  </Card>
+  <Card title="Roadmap">
+    Datasets, a VM per branch, GitHub Actions previews, and the MCP server, in build order.
+
+    [See what is next →](/docs/roadmap/)
+  </Card>
+</CardGrid>

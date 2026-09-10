@@ -1,0 +1,30 @@
+---
+title: Roadmap
+description: What is built, what is next, and the design rule that holds across milestones.
+---
+
+envctl is built in milestones that are each useful on their own. Milestone 1 is done; the rest are ordered by what unblocks the next.
+
+## Milestone 1: local isolation
+
+Done. Compose project per branch, domains and registry port modes, labels, env file, Claude Code worktree hooks, JSON output on every command.
+
+## Milestone 2: named datasets
+
+`envctl snapshot <name>` dumps the environment's Postgres and a manifest of LocalStack buckets and queues to S3. `envctl seed <name>` restores them into an environment, then keeps a golden copy so `envctl reset` is a drop and create from template that takes seconds. The same dataset name works locally and on a VM. Anonymised production snapshots come from a scheduled job using Greenmask.
+
+## Milestone 3: a VM per branch
+
+A `vm` backend that runs the same compose file on one EC2 instance per feature. Rendered files are delivered over SSM, images pull from ECR, Caddy terminates TLS with a wildcard certificate at `<branch>.preview.<domain>`, and only port 443 is open. GitHub Actions creates the environment on the first push of a branch with a PR, updates it on every push, and destroys it on merge or close.
+
+## Milestone 4: sharing and hygiene
+
+oauth2-proxy in front of every preview so a URL is safe to paste to a teammate. Idle instances stop after a quiet day and start on the next push. A nightly reaper destroys instances whose branch is gone. A `workflow_dispatch` reseeds or snapshots an environment from the Actions tab.
+
+## Milestone 5: agents and the graph
+
+An MCP server exposing status, logs, exec, seed, snapshot, and promote, so an agent can inspect its own environment and hand a teammate a preview link. Hooks for the workflow engine: provision when a node starts, snapshot when it finishes, and seed a child feature from its parent's latest snapshot by default.
+
+## The rule that holds
+
+The workflow engine and agents only ever call the provider interface in `internal/provider`. Docker, AWS, and datasets sit behind it. A backend can change without anything above it noticing.

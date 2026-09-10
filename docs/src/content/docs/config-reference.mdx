@@ -1,0 +1,85 @@
+---
+title: Config reference
+description: Every envctl.yaml key, its default, and how it is validated.
+---
+
+The manifest is YAML. Unknown keys are ignored. Validation errors name the key and are reported together.
+
+## Top level
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `version` | int | `1` | Only `1` is accepted. |
+| `project` | string | required | Prefix for compose project names. Must match `^[a-z][a-z0-9-]{0,15}$`. |
+| `stack` | object | required | See below. |
+| `ports` | object | see below | See below. |
+| `expose` | list | `[]` | See below. |
+
+## `stack`
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `files` | list of paths | required, at least one | Relative to the manifest. Each must exist. Merged in order. |
+| `env_files` | list of paths | `[]` | Relative to the manifest. Missing files are skipped. Used for interpolation. |
+| `profiles` | list of strings | `[]` | Compose profiles to enable. |
+
+## `ports`
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `mode` | `auto` / `domains` / `registry` | `auto` | See [Concepts](/docs/concepts/#port-modes). |
+| `range` | `[lo, hi]` | `[41000, 49999]` | Both within 1024 to 65535, `lo < hi`. Only used in registry mode. |
+
+## `expose[]`
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `service` | string | required | Compose service name. |
+| `port` | int | `0` | Container port. `0` means the first published port of the service. |
+| `scheme` | string | `http` | Used to build the URL. |
+| `path` | string | `/` | Appended to the URL. |
+
+## Generated files
+
+envctl writes under `.envctl/<feature>/` in the worktree.
+
+| File | Contents |
+| --- | --- |
+| `compose.yaml` | The rendered project. Regenerated on every `up` and `render`. |
+| `env` | `KEY=VALUE` lines described below. |
+
+## Env file variables
+
+| Variable | Value |
+| --- | --- |
+| `ENVCTL_FEATURE` | Feature slug. |
+| `ENVCTL_PROJECT` | Compose project name. |
+| `ENVCTL_BACKEND` | `local`. |
+| `ENVCTL_PORT_MODE` | `domains` or `registry`. |
+| `ENVCTL_HOST_<SERVICE>` | `service.project.orb.local` in domains mode, `127.0.0.1` in registry mode. Service names are uppercased with `-` and `.` replaced by `_`. |
+| `ENVCTL_PORT_<SERVICE>_<TARGET>` | Allocated host port for that container port. Registry mode only. |
+
+## Labels
+
+Every rendered service carries:
+
+| Label | Value |
+| --- | --- |
+| `dev.envctl.feature` | Feature slug. |
+| `dev.envctl.backend` | `local`. |
+| `dev.envctl.project` | Compose project name. |
+
+## Port registry
+
+`~/.config/envctl/ports.json`, or `$XDG_CONFIG_HOME/envctl/ports.json`:
+
+```json
+{
+  "allocations": {
+    "mg-feat-thing/postgres/5432": 41000,
+    "mg-feat-thing/api/8787": 41001
+  }
+}
+```
+
+Keys are `project/service/containerPort`. `envctl down -v` removes a project's entries. Deleting the file is safe; ports are reallocated on the next render.

@@ -1,0 +1,86 @@
+---
+title: CLI reference
+description: Every envctl command and flag, with output shapes for scripts and agents.
+---
+
+envctl runs against the Docker host in front of you. It derives the environment from the git worktree of the current directory and prints human output by default; add `--json` for a single JSON document on stdout. Compose progress always goes to stderr.
+
+## Global flags
+
+```bash
+envctl [-C PATH] [--feature SLUG] [--backend local] [--port-mode domains|registry] [--json] <command>
+```
+
+`-C PATH` operates on the worktree containing `PATH` instead of the current directory. `--feature SLUG` replaces branch detection; the value is slugified. `--backend` accepts `local` today. `--port-mode` overrides `ports.mode` from the manifest for this invocation. `--json` switches output to JSON on every command that reports something.
+
+## Environment lifecycle
+
+```bash
+envctl up [--build] [--no-wait]
+envctl down [-v|--volumes]
+envctl stop
+envctl start
+```
+
+`up` renders the isolated compose file, then runs `docker compose up --detach --remove-orphans`, and prints status. It converges an existing environment rather than failing. `--build` rebuilds images first. By default `up` waits for health checks; `--no-wait` returns as soon as containers are started, which the worktree hook uses so agents are not blocked by slow services.
+
+`down` removes containers and the network and keeps volumes, so `up` restores the data. `down -v` also deletes volumes, releases this project's port allocations, and removes `.envctl/<feature>/`. `down` renders on demand if nothing has been rendered yet, so it works on a fresh clone.
+
+`stop` and `start` map to compose `stop` and `start`: containers stay, data stays, nothing is listening in between.
+
+Start a rebuilt environment and print JSON for a script:
+
+```bash
+envctl up --build --json | jq '.endpoints'
+```
+
+## Inspection
+
+```bash
+envctl status
+envctl list
+envctl render
+```
+
+`status` reads the rendered files and asks compose which containers exist. It prints the feature, project, backend, each service with its state and health, endpoints, and the env file path. In JSON the `env` array holds the env file lines. `status` requires a prior `up` or `render`.
+
+`list` prints every compose project on the host whose name starts with this manifest's prefix, with compose's status summary. It does not need a rendered environment. JSON output is Docker's `compose ls` rows.
+
+`render` writes `.envctl/<feature>/compose.yaml` and `env` without starting anything, and prints the same status shape without container state. Use it to inspect what a port mode did:
+
+```bash
+envctl --port-mode registry render
+docker compose -p mg-feat-thing -f .envctl/feat-thing/compose.yaml config
+```
+
+## Working inside the environment
+
+```bash
+envctl logs [-f|--follow] [service...]
+envctl exec <service> -- <command...>
+```
+
+`logs` streams compose logs for the whole environment or the named services. `exec` runs a command in a running service container with a TTY when stdin is a terminal:
+
+```bash
+envctl exec postgres -- psql -U metergraph -c 'select now()'
+```
+
+## Repository setup
+
+```bash
+envctl init --project PREFIX [--file PATH ...]
+envctl hook claude
+```
+
+`init` writes a starter `envctl.yaml` in the target directory and refuses to overwrite one. `--project` is required; `--file` may repeat and defaults to `docker-compose.yml`.
+
+`hook claude` prints the `hooks` block to merge into `.claude/settings.json`. See [Agents](/docs/agents/).
+
+## Exit codes
+
+`0` on success. `1` on any failure, with a one-line reason on stderr prefixed `envctl:`. Compose's own exit code is passed through when compose fails.
+
+## Feature names
+
+Branch names are lowercased; runs of characters outside `a-z0-9` become one `-`; leading and trailing `-` are trimmed; the result is cut to 40 characters. `feat/Imported Pricing` becomes `feat-imported-pricing`. A detached HEAD uses the worktree directory name. An empty result becomes `default`.

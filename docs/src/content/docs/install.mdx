@@ -1,0 +1,53 @@
+---
+title: Install
+description: Install the envctl binary and its optional Claude Code hooks.
+---
+
+envctl is a single Go binary. It needs Docker with the compose plugin on the machine it runs on. Nothing else runs in the background.
+
+## Requirements
+
+| Requirement | Why |
+| --- | --- |
+| Docker Engine with `docker compose` v2 | envctl renders a compose file and runs plain compose on it. |
+| git | The feature name comes from the branch of the current worktree. |
+| `jq` | Only for the Claude Code hook scripts. |
+
+On macOS, OrbStack is the best host: envctl detects it and reaches services by DNS instead of publishing host ports. Docker Desktop and Colima work too, with stable loopback ports from a registry.
+
+## Install from source
+
+While the repo is private, build from a checkout:
+
+```bash
+git clone git@github.com:sam-bretz/envctl.git
+cd envctl
+go install ./cmd/envctl
+```
+
+`go install` puts `envctl` in `$(go env GOPATH)/bin`. Make sure that directory is on your `PATH`.
+
+Check it:
+
+```bash
+envctl --version
+```
+
+## Install the hooks
+
+The Claude Code hooks are two shell scripts in `hooks/claude/`. Put them somewhere on `PATH`:
+
+```bash
+install -m 0755 hooks/claude/envctl-worktree-create hooks/claude/envctl-worktree-remove "$(go env GOPATH)/bin/"
+```
+
+Then register them in a repo. See [Agents](/docs/agents/).
+
+## Upgrade
+
+Pull and run `go install ./cmd/envctl` again. Rendered environments keep working; run `envctl up` in each worktree to re-render with the new version.
+
+## Where next
+
+- [Quick start](/docs/quick-start/) creates a manifest and starts your first environment.
+- [Configuration](/docs/configuration/) explains every manifest choice.

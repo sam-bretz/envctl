@@ -1,0 +1,65 @@
+---
+title: Concepts
+description: Understand features, environments, port modes, the rendered project, and how state is kept.
+---
+
+envctl is a thin layer over docker-compose. It does not replace compose, run a daemon, or keep a database. It rewrites a compose project so that many copies of it can run side by side.
+
+## Feature
+
+A feature is the unit of isolation. Its name is a slug derived from the git branch of the current worktree: `feat/imported-traffic-pricing` becomes `feat-imported-traffic-pricing`. On a detached HEAD the worktree directory name is used instead.
+
+Override the name with `--feature` when you need an environment that is not tied to a branch, for example a throwaway `--feature scratch`.
+
+## Environment
+
+An environment is one feature's running stack on one backend. Today the only backend is `local`, the Docker host in front of you. A per-branch VM backend arrives later; see [Roadmap](/docs/roadmap/).
+
+An environment's compose project name is `<prefix>-<feature>`, for example `mg-feat-imported-traffic-pricing`. That name prefixes every container, network, and volume, which is what keeps environments apart.
+
+## Manifest
+
+`envctl.yaml` at the repository root tells envctl which compose files make up the stack, which port mode to use, and which services are user-facing entrypoints. It is the whole contract between a repository and envctl. See [Configuration](/docs/configuration/).
+
+## Rendered project
+
+`envctl up` loads the compose files with compose-go, the library Docker's own compose uses, then rewrites the in-memory project:
+
+| Rewrite | Effect |
+| --- | --- |
+| Project name | Namespaces containers, networks, and volumes. |
+| Host ports | Stripped in domains mode; replaced with registry ports on `127.0.0.1` in registry mode. |
+| `container_name` | Prefixed with the project when a service pins one. |
+| Labels | `dev.envctl.feature`, `dev.envctl.backend`, and `dev.envctl.project` on every service. |
+
+The result is written to `.envctl/<feature>/compose.yaml` and run with plain `docker compose`. Your source files are never modified, and anything compose can do still works on the rendered file.
+
+## Port modes
+
+Two environments cannot both publish container port 5432 on host port 5433. envctl resolves this one of two ways.
+
+| Mode | Behaviour | When |
+| --- | --- | --- |
+| `domains` | No host ports are published. Services are reached at `service.project.orb.local`. | OrbStack, which gives every container a DNS name reachable from the host. |
+| `registry` | Every published port is replaced by a stable port from a local registry, bound to `127.0.0.1`. | Docker Desktop, Colima, Linux engines. |
+
+`auto`, the default, picks `domains` on OrbStack and `registry` elsewhere. Force one with `--port-mode` or the manifest.
+
+## Env file
+
+Each render writes `.envctl/<feature>/env` with `KEY=VALUE` lines:
+
+```text
+ENVCTL_FEATURE=feat-x
+ENVCTL_PROJECT=mg-feat-x
+ENVCTL_BACKEND=local
+ENVCTL_PORT_MODE=registry
+ENVCTL_HOST_POSTGRES=127.0.0.1
+ENVCTL_PORT_POSTGRES_5432=41000
+```
+
+Makefiles, native test runners, and agents source this file instead of assuming a port. See [How to work with envctl](/docs/how-to-work/).
+
+## State
+
+envctl keeps no server and no database. Environments are discovered from Docker through project names and labels. The rendered files live in the worktree. The only other state is the port registry at `~/.config/envctl/ports.json`, which maps `project/service/port` to a host port so allocations stay stable across restarts. `envctl down -v` releases a project's allocations.

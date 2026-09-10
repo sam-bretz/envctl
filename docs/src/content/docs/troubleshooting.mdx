@@ -1,0 +1,54 @@
+---
+title: Troubleshooting
+description: The errors you are most likely to meet and what to do about them.
+---
+
+## `no envctl.yaml found`
+
+envctl looks for the manifest at the root of the current worktree only. It does not walk above the worktree, because Claude Code nests worktrees under the main checkout and the parent's files would be wrong for this branch. Commit `envctl.yaml` so every worktree has it, or run `envctl init`.
+
+## `docker is not reachable`
+
+`docker info` failed. Start OrbStack or Docker Desktop, or check `docker context show` points at a running engine.
+
+## Ports still collide
+
+Check the mode envctl chose:
+
+```bash
+envctl render --json | jq -r '.env[]' | grep PORT_MODE
+```
+
+In `registry` mode, every original host binding is replaced, so a collision means another process outside envctl holds a registry port. envctl skips ports that are bound at allocation time; if a port was free then and taken later, run `envctl down -v` to release the allocation and `envctl up` to get a new one.
+
+In `domains` mode no host ports are published at all. If you see a published port, a compose file in `stack.files` uses `network_mode: host`, which envctl does not rewrite.
+
+## OrbStack domain does not resolve
+
+Enable **Allow access to container domains & IPs** in OrbStack under Settings, Network. Then check `dig +short postgres.mg-feat-thing.orb.local`.
+
+## Two Postgres servers on one port
+
+A native Postgres on the host and a container both bound to a port. envctl never binds `0.0.0.0` and never uses ports below the registry range, so the conflict is between the native server and a pre-envctl compose project. Stop the old project with `docker compose -p app down`.
+
+## `environment ... has not been rendered`
+
+`envctl status` reads the rendered files from `.envctl/<feature>/`. Run `envctl up` or `envctl render` first. `envctl down` renders on demand, so it works on a fresh clone.
+
+## The worktree hook fails
+
+Run the hook by hand to see its output:
+
+```bash
+echo '{"worktree_path":"/tmp/wt-test","base_ref":"main","cwd":"'$PWD'"}' | envctl-worktree-create
+```
+
+Common causes are `jq` missing, the scripts not on `PATH` for Claude Code's shell, or a compose file that needs environment variables the hook's shell does not have. Put those in an `env_files` entry in the manifest rather than in your shell profile.
+
+## Rendered file looks different from the source
+
+That is expected. compose-go resolves relative paths to absolute ones, expands interpolation, and normalises short syntax. The behaviour is the same; the file is just explicit.
+
+## Something else
+
+`envctl render` followed by `docker compose -f .envctl/<feature>/compose.yaml config` shows exactly what compose will run. Most problems are visible there.

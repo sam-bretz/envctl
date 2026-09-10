@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Claude Code WorktreeRemove hook: tear down the environment (including data)
+# before Claude deletes the worktree. Never blocks cleanup.
+set -uo pipefail
+input=$(cat)
+path=$(jq -r '.worktree_path' <<<"$input")
+if [ -d "$path" ]; then
+  envctl -C "$path" down --volumes >&2 || true
+fi
+exit 0

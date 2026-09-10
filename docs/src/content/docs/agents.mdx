@@ -1,0 +1,63 @@
+---
+title: Agents
+description: Give every Claude Code worktree its own environment with two hooks, and let agents inspect their environment safely.
+---
+
+Coding agents that run in git worktrees are the reason envctl exists. Each agent should have a database and services nobody else is writing to, and should leave nothing behind when it finishes.
+
+## Claude Code worktree hooks
+
+Claude Code fires `WorktreeCreate` before it creates a worktree and `WorktreeRemove` before it deletes one. envctl ships a script for each.
+
+Print the configuration and merge it into the repo's `.claude/settings.json`:
+
+```bash
+envctl hook claude
+```
+
+```json
+{
+  "hooks": {
+    "WorktreeCreate": [
+      { "type": "command", "command": "envctl-worktree-create", "timeout": 600 }
+    ],
+    "WorktreeRemove": [
+      { "type": "command", "command": "envctl-worktree-remove", "timeout": 300 }
+    ]
+  }
+}
+```
+
+Both scripts must be on `PATH` and need `jq`. See [Install](/docs/install/).
+
+### What the create hook does
+
+Claude Code passes `worktree_path`, `base_ref`, and `cwd` on stdin and adopts whatever path the hook prints. The script:
+
+1. creates the git worktree on a `worktree-<name>` branch from `base_ref`, unless the directory exists;
+2. runs `envctl up --no-wait` inside it when the repo has an `envctl.yaml`;
+3. prints the path.
+
+If the environment fails to start, the worktree is still returned and a message goes to stderr, so the agent can retry `envctl up` itself rather than losing the worktree.
+
+### What the remove hook does
+
+It runs `envctl down --volumes` in the worktree and always exits 0, so cleanup never blocks Claude Code.
+
+## What an agent should know
+
+Add a short note to `CLAUDE.md` so agents use the environment instead of guessing:
+
+```markdown
+## Local services
+This worktree has its own docker-compose environment managed by envctl.
+Run `envctl status --json` to find service hosts and ports. Never assume
+localhost:5433. Do not run `docker compose` directly; use `envctl up`,
+`envctl logs`, and `envctl exec`.
+```
+
+Every command accepts `--json`, and `status --json` includes the env file lines, so an agent can read connection details in one call. See [Agent automation](/docs/agent-automation/).
+
+## Other agents and worktree managers
+
+Any tool that creates worktrees can call `envctl -C <path> up` after creation and `envctl -C <path> down -v` before removal. The `-C` flag makes envctl operate on that worktree regardless of the current directory, and the feature name is derived from that worktree's branch.

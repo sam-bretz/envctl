@@ -1,0 +1,78 @@
+---
+title: Configuration
+description: Write envctl.yaml, choose a port mode, expose entrypoints, and prepare a compose file for isolation.
+---
+
+All configuration for a repository lives in `envctl.yaml` at its root. There is no user-level configuration beyond the port registry file, which envctl manages itself.
+
+## A complete manifest
+
+```yaml
+version: 1
+project: mg                     # compose projects become mg-<feature>
+stack:
+  files:
+    - deploy/local/docker-compose.yml
+    - deploy/local/docker-compose.dev.yml
+  env_files: [".env"]           # optional; missing files are ignored
+  profiles: []                  # compose profiles to enable
+ports:
+  mode: auto                    # auto | domains | registry
+  range: [41000, 49999]         # registry range
+expose:
+  - service: api
+    port: 8787
+    scheme: http
+    path: /
+```
+
+Create a starter with `envctl init --project mg --file <compose file>`.
+
+## Choose the project prefix
+
+`project` is the first part of every compose project name. Keep it short and unique per repository on a shared host; `mg-` and `mgi-` can coexist, two repos both using `app` cannot. It must match `^[a-z][a-z0-9-]{0,15}$`.
+
+## List the stack files
+
+`stack.files` are loaded in order and merged the way `docker compose -f a -f b` merges them. Paths are relative to the manifest. Every file must exist.
+
+`stack.env_files` are read for interpolation, the same as compose's `--env-file`. `stack.profiles` enables compose profiles, so services behind a profile start.
+
+## Pick a port mode
+
+| Value | Result |
+| --- | --- |
+| `auto` | `domains` on OrbStack, `registry` elsewhere. The right default for a mixed team. |
+| `domains` | Strip host ports; reach services by DNS. Only meaningful on OrbStack. |
+| `registry` | Replace host ports with stable loopback ports from `range`. |
+
+A developer can override the manifest for one invocation with `--port-mode`.
+
+## Expose entrypoints
+
+`expose` lists services a person opens in a browser or points a client at. `envctl status` prints a URL for each. `port` is the container port; `scheme` defaults to `http` and `path` to `/`. In registry mode the URL uses the allocated host port; in domains mode it uses the OrbStack name.
+
+## Prepare the compose file
+
+envctl works on unmodified compose files, but a few patterns make the result cleaner.
+
+**Do not pin `container_name`.** envctl prefixes pinned names so they cannot collide, but the prefixed name is harder to predict. Let compose name containers.
+
+**Do not use `network_mode: host`.** There is nothing to isolate; the container shares the host's ports. envctl leaves such services alone.
+
+**Bind services to `0.0.0.0` inside the container.** In domains mode the host connects to the container's address directly, so a service listening on `127.0.0.1` inside the container is unreachable.
+
+**Reference images by variable when CI builds them.** `image: ${METERGRAPH_APP_IMAGE}` lets local builds and the VM backend share one file. envctl passes `ENVCTL_IMAGE_TAG` through to interpolation when `--tag` is given in a later milestone.
+
+## Ignore rendered files
+
+Add to `.gitignore`:
+
+```text
+.envctl/
+```
+
+## Where next
+
+- [Config reference](/docs/config-reference/) lists every key with defaults and validation.
+- [CLI reference](/docs/cli-reference/) lists every command and flag.

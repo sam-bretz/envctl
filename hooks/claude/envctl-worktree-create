@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Claude Code WorktreeCreate hook: create the git worktree Claude asked for,
+# bring up an isolated compose environment inside it, and hand the path back.
+#
+# Contract (code.claude.com/docs/en/hooks): JSON on stdin with worktree_path,
+# base_ref and cwd; printing a path on stdout makes Claude adopt that
+# directory as the worktree; a non-zero exit aborts creation.
+set -euo pipefail
+input=$(cat)
+path=$(jq -r '.worktree_path' <<<"$input")
+base=$(jq -r '.base_ref // "HEAD"' <<<"$input")
+repo=$(jq -r '.cwd' <<<"$input")
+name=$(basename "$path")
+
+if [ ! -d "$path" ]; then
+  git -C "$repo" worktree add -b "worktree-$name" "$path" "$base" >&2
+fi
+
+if [ -f "$repo/envctl.yaml" ] || git -C "$path" ls-files --error-unmatch envctl.yaml >/dev/null 2>&1; then
+  envctl -C "$path" up --no-wait >&2 || echo "envctl: environment failed to start; worktree kept" >&2
+fi
+
+echo "$path"

@@ -1,0 +1,93 @@
+---
+title: How to work with envctl
+description: Day-to-day patterns: Makefiles, native test runners, several branches at once, and cleanup.
+---
+
+envctl fits around the way you already run the stack. This page collects the patterns that come up in the first week.
+
+## Point host tooling at the env file
+
+Anything that runs on the host and talks to a container, a native `pytest`, a `uvicorn` reload loop, a Makefile target, should read `.envctl/<feature>/env` instead of a hardcoded port.
+
+A Makefile fragment:
+
+```make
+FEATURE := $(shell git branch --show-current | tr '/' '-' | tr 'A-Z' 'a-z')
+-include .envctl/$(FEATURE)/env
+export
+
+test:
+	pytest   # reads ENVCTL_HOST_POSTGRES and ENVCTL_PORT_POSTGRES_5432
+```
+
+In a shell:
+
+```bash
+set -a; . ".envctl/$(git branch --show-current | tr '/' '-')/env"; set +a
+```
+
+In domains mode there is no `ENVCTL_PORT_*` variable, because the container port is reached directly. Write connection code as `host:${PORT:-5432}` so both modes work.
+
+## Run several branches at once
+
+Each worktree is a separate environment. Nothing needs to be stopped before starting another:
+
+```bash
+cd ~/code/app                      # main
+envctl up
+git worktree add ../app-feat feat/thing
+cd ../app-feat
+envctl up
+envctl list
+```
+
+Resource use is the sum of the stacks. `envctl stop` pauses a branch you are not touching today and keeps its data; `envctl start` resumes it.
+
+## Rebuild after code changes
+
+If the stack builds images from the repo, rebuild the current branch's images:
+
+```bash
+envctl up --build
+```
+
+Image caches are shared across environments, so unchanged services rebuild instantly.
+
+## Reset a branch's data
+
+```bash
+envctl down -v && envctl up
+```
+
+Named datasets with faster resets are milestone 2; see [Roadmap](/docs/roadmap/).
+
+## Use a throwaway environment
+
+```bash
+envctl --feature scratch up
+envctl --feature scratch down -v
+```
+
+The `--feature` flag overrides branch detection, so one branch can have several environments.
+
+## See what compose sees
+
+`envctl render` writes the isolated compose file without starting anything. Inspect it to check what a port mode did, or pass it to compose directly:
+
+```bash
+envctl render
+docker compose -p mg-feat-thing -f .envctl/feat-thing/compose.yaml config
+```
+
+## Clean up everything for a project
+
+```bash
+envctl list --json | jq -r '.[].Name'
+```
+
+Run `envctl --feature <name-without-prefix> down -v` for each, or `docker compose -p <name> down -v` if the worktree is already gone.
+
+## Where next
+
+- [Agents](/docs/agents/) makes Claude Code worktrees do all of this automatically.
+- [Troubleshooting](/docs/troubleshooting/) lists the errors you are most likely to meet.

@@ -1,0 +1,184 @@
+---
+title: Your first workflow
+description: Run a feature end to end through Task, Plan, Design, Code, QA and an approved pull request, in an isolated VM.
+---
+
+This walkthrough takes one change from an objective to a draft pull request. Agents do the work inside a dedicated virtual machine, and you review at every checkpoint.
+
+The workflow runtime is experimental. It has been exercised on macOS on Apple silicon with Lima; other hosts are untested. See the [roadmap](/envctl/roadmap/) for what is proven and what is not.
+
+## Before you start
+
+| You need | Why |
+| --- | --- |
+| `envctl` v0.2.0 or later, Docker, and [Lima](https://lima-vm.io/) | The coordinator, your services, and the VM |
+| A long-lived agent credential | Agents run in the VM; see [Install](/envctl/install/#set-up-agent-credentials-workflow-runtime) |
+| A git repository with a Compose file | Its services run beside the agents |
+| `gh auth login`, for pull request output | The coordinator pushes and opens the PR |
+
+Everything runs on your machine. Nothing is sent anywhere except the agent's own model calls and, at the end, the pull request.
+
+## 1. Describe the workflow
+
+Add `envctl.yaml` at the repository root. Version 2 selects the workflow runtime:
+
+```yaml
+version: 2
+project: shop
+repositories:
+  - id: app
+    url: https://github.com/you/shop.git
+    ref: main
+stack:
+  files: [compose.yaml]
+workflow:
+  template: feature
+  nodes:
+    qa:
+      checks:
+        - name: unit
+          command: [npm, test]
+agents:
+  worker:
+    kind: claude
+    credential: file:/Users/you/.config/envctl/claude-token.json
+  supervisor:
+    kind: claude
+    credential: file:/Users/you/.config/envctl/claude-token.json
+```
+
+Three things matter here.
+
+**The repository is cloned into the VM from `url` at `ref`**, not copied from your working tree. Your uncommitted edits are not used, and nothing the agents do can touch your checkout. Push the branch you want them to start from.
+
+**QA needs real checks.** The `feature` template gives you the six stages, but its QA stage has no commands, and envctl refuses to accept a QA checkpoint without executable checks. The `nodes.qa` block above merges into the template. A check runs in the VM, in the repository's directory.
+
+**Agents need a credential** that is safe to place in a VM. A `file:` path must be absolute.
+
+Check it before you start anything:
+
+```bash
+envctl run validate
+```
+
+That prints the complete configuration, including every default it filled in: the Lima provider, a dedicated VM, CPU, memory and disk, and the pinned harness version.
+
+## 2. Create the run
+
+```bash
+envctl run create --task "Add CSV export to the orders report" --name "orders csv export"
+```
+
+This returns immediately with a run ID like `run_8f0c…`. A coordinator starts in the background if one isn't already running, provisions the VM, clones the repository at an exact commit, and starts the first stage. The first run on a machine also downloads the VM image, which takes a while.
+
+## 3. Watch it
+
+```bash
+envctl ui
+```
+
+The dashboard shows the stage strip, your in-flight runs, and a focused panel:
+
+| Key | Action |
+| --- | --- |
+| `↑` `↓` | Move between runs |
+| `←` `→` | Move between stages |
+| `tab` | Cycle panels: Conversation, Checkpoint, Changes, Tests, Services, Readiness, Graph, History |
+| `i` | Write to the agent; `s` switches between worker and supervisor |
+| `d` | Diff the stage; `b` sets a comparison base, `B` clears it |
+| `o` | Open the selected artifact; `,` and `.` select |
+| `[` `]` | Browse revision history |
+| `r` `a` `x` | Rewind, approve, cancel |
+| `q` | Detach; execution continues |
+
+Closing the dashboard never stops the run. For scripts, `envctl run show <run> --json` has the same information.
+
+## 4. Plan has to prove it can finish
+
+Plan is a gate, not a document. It cannot complete while a capability the workflow needs is unresolved: a missing agent connection, no Compose stack, an unreachable database, or no pull request destination. envctl probes each one for real.
+
+```bash
+envctl run readiness <run> --json
+```
+
+If something is missing, the run says so instead of failing three stages later. Two ways out:
+
+- **Fix the environment**, for example authenticate `gh` so `publication.pr` can pass.
+- **Attach a plugin** that supplies the capability, which reopens Plan in a new revision:
+
+  ```bash
+  envctl run plugin add <run> --file browser.yaml
+  ```
+
+Downstream stages start only after the actual probe passes. A worker claiming "done" cannot move Plan.
+
+## 5. Steer while it works
+
+Agents report progress continuously: the phase, the current check, and their recent activity. To redirect one mid-task:
+
+```bash
+envctl run message <run> --node code --to worker --text "Use the existing CSV writer in lib/export.ts"
+```
+
+This reaches the running agent within seconds. envctl interrupts its turn and resumes the same session with your message, keeping the work it has already done. The supervisor also sees your messages and should reject work that ignores them. Each message shows its status: delivered live, or queued for the next attempt.
+
+## 6. Review a checkpoint
+
+Every stage ends in an immutable checkpoint: the agent's output, the source commits, check results, and an independent supervisor review.
+
+```bash
+envctl run checkpoints <run>
+envctl run diff <run> --node code
+envctl run artifact <digest> --output ./plan.md
+```
+
+Diffs come from retained bundles, so they still work after the VM is gone.
+
+## 7. Change your mind
+
+Rewind to any earlier stage. Work already running finishes into history rather than being killed, and the new attempt restores that stage's exact inputs:
+
+```bash
+envctl run rewind <run> --to design --task "Export XLSX as well as CSV"
+```
+
+Rewinding creates a new revision. The old one stays reviewable under `[` and `]`, and its results can never overwrite the new one.
+
+## 8. Approve and get the pull request
+
+The final stage is a human gate. Nothing is pushed until you approve the exact reviewed result:
+
+```bash
+envctl run approve <run>
+```
+
+envctl then pushes a revision branch and opens a draft pull request whose body lists the validated commits and the QA evidence. If the change adds Git LFS files or moves a submodule, those objects are published first, and the pull request says which submodule pull requests must merge first.
+
+To stop a run and release its VM:
+
+```bash
+envctl run cancel <run>
+```
+
+## Optional: see the application
+
+Services in the VM are private to it. To open one from your machine, opt in:
+
+```yaml
+preview:
+  service: web
+  port: 8080
+```
+
+`envctl run show` then prints a `127.0.0.1` preview URL while the service answers. Agents and checks always reach services through `ENVCTL_SERVICE_<NAME>_URL` inside the VM.
+
+## What this costs
+
+Each executing revision gets its own VM, and parallel branches get their own as well; `limits.vms` caps them. Agent work bills to whatever credential you configured. A plan's usage limit stops a worker mid-stage, so check your remaining quota before a long run.
+
+## Where next
+
+- [Workflow fixtures](/envctl/workflow-fixtures/) adds seeded test data and browser checks.
+- [Config reference](/envctl/config-reference/) lists every version 2 key, including per-stage budgets and stall windows.
+- [CLI reference](/envctl/cli-reference/) documents every command and its JSON output.
+- [Workflow runtime design](/envctl/design/workflow-runtime/) explains why Plan is a gate and how rewind preserves both histories.

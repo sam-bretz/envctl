@@ -3,7 +3,7 @@ title: Quick start
 description: Add a manifest to a repository and start an isolated environment for the current branch.
 ---
 
-If envctl is not installed yet, see [Install](/docs/install/). Then, from the root of a repository that has a compose file:
+If envctl is not installed yet, see [Install](/envctl/install/). Then, from the root of a repository that has a compose file:
 
 ```bash
 envctl init --project mg --file app/docker-compose.yml
@@ -72,6 +72,10 @@ mg-main                                          running(1)
 
 ## Where next
 
-- [Concepts](/docs/concepts/) explains features, environments, and port modes.
-- [How to work with envctl](/docs/how-to-work/) covers Makefiles, native test runners, and several branches at once.
-- [Agents](/docs/agents/) wires Claude Code worktrees to environments.
+- [Concepts](/envctl/concepts/) explains features, environments, and port modes.
+- [How to work with envctl](/envctl/how-to-work/) covers Makefiles, native test runners, and several branches at once.
+- [Agents](/envctl/agents/) wires Claude Code worktrees to environments.
+
+## Where next
+
+- [Your first workflow](/envctl/first-workflow/) runs a feature end to end with agents in an isolated VM.

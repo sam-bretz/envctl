@@ -27,7 +27,7 @@ The manifest is YAML. Unknown keys are ignored. Validation errors name the key a
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `mode` | `auto` / `domains` / `registry` | `auto` | See [Concepts](/docs/concepts/#port-modes). |
+| `mode` | `auto` / `domains` / `registry` | `auto` | See [Concepts](/envctl/concepts/#port-modes). |
 | `range` | `[lo, hi]` | `[41000, 49999]` | Both within 1024 to 65535, `lo < hi`. Only used in registry mode. |
 
 ## `expose[]`
@@ -90,7 +90,7 @@ Keys are `project/service/containerPort`. `envctl down -v` removes a project's e
 
 ## Workflow limits (version 2, experimental)
 
-Version 2 workflow configurations set revision-wide limits under `limits`. A workflow node can override the attempt budget for its own assignments under `workflow.nodes.<id>.limits`. See the [workflow runtime design](/docs/design/workflow-runtime/#child-runtimes-for-parallel-execution).
+Version 2 workflow configurations set revision-wide limits under `limits`. A workflow node can override the attempt budget for its own assignments under `workflow.nodes.<id>.limits`. See the [workflow runtime design](/envctl/design/workflow-runtime/#child-runtimes-for-parallel-execution).
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |

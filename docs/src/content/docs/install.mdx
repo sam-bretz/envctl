@@ -47,7 +47,7 @@ Homebrew already puts the hooks on your `PATH`. From source, the Claude Code hoo
 install -m 0755 hooks/claude/envctl-worktree-create hooks/claude/envctl-worktree-remove "$(go env GOPATH)/bin/"
 ```
 
-Then register them in a repo. See [Agents](/docs/agents/).
+Then register them in a repo. See [Agents](/envctl/agents/).
 
 ## Set up agent credentials (workflow runtime)
 
@@ -110,5 +110,5 @@ With Homebrew, run `brew upgrade envctl`. From source, run `go install github.co
 
 ## Where next
 
-- [Quick start](/docs/quick-start/) creates a manifest and starts your first environment.
-- [Configuration](/docs/configuration/) explains every manifest choice.
+- [Quick start](/envctl/quick-start/) creates a manifest and starts your first environment.
+- [Configuration](/envctl/configuration/) explains every manifest choice.

@@ -82,7 +82,7 @@ An environment named after the branch is created implicitly by `up` and linked t
 
 `env link` re-points an environment at another branch. `env unlink` keeps the environment but stops it following any branch. `env list` is the same as `list`. `env rm` is `down --volumes` plus removal of the record.
 
-Locally the code always comes from the worktree you run in; the linked branch decides which pushes update the environment in CI. See the [environment identity](/docs/design/env-identity/) design note.
+Locally the code always comes from the worktree you run in; the linked branch decides which pushes update the environment in CI. See the [environment identity](/envctl/design/env-identity/) design note.
 
 ## Inspection
 
@@ -125,7 +125,7 @@ envctl hook claude
 
 `init` writes a starter `envctl.yaml` in the target directory and refuses to overwrite one. `--project` is required; `--file` may repeat and defaults to `docker-compose.yml`.
 
-`hook claude` prints the `hooks` block to merge into `.claude/settings.json`. See [Agents](/docs/agents/).
+`hook claude` prints the `hooks` block to merge into `.claude/settings.json`. See [Agents](/envctl/agents/).
 
 ## Agent skill
 
@@ -134,7 +134,7 @@ envctl agent install [--global]
 envctl agent snippet
 ```
 
-`agent install` copies the embedded skill (`SKILL.md` and `REFERENCE.md`) into `.claude/skills/envctl/` and `.agents/skills/envctl/` at the worktree root, then prints the `CLAUDE.md` paragraph. `--global` writes to `~/.claude/skills`, `~/.agents/skills`, and `~/.codex/skills` instead. `agent snippet` prints only the paragraph. See [Agents](/docs/agents/).
+`agent install` copies the embedded skill (`SKILL.md` and `REFERENCE.md`) into `.claude/skills/envctl/` and `.agents/skills/envctl/` at the worktree root, then prints the `CLAUDE.md` paragraph. `--global` writes to `~/.claude/skills`, `~/.agents/skills`, and `~/.codex/skills` instead. `agent snippet` prints only the paragraph. See [Agents](/envctl/agents/).
 
 ## Exit codes
 

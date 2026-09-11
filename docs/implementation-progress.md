@@ -448,3 +448,31 @@ Handover from the Codex session to Claude Code. Full `go test ./...`, `go vet ./
 - Not yet investigated: whether the Codex adapter's once-per-role-home `auth.json` copy has the same rotation hazard for ChatGPT refresh tokens.
 - **Real Claude harness conformance PASS**, fresh run, `TestRealHarnessConformance` with `ENVCTL_HARNESS_KIND=claude` and a `claude setup-token` credential file reference, 38.94s. State: `/var/folders/bd/mtrzdck92l10k6xpmqxtq2w00000gn/T/envctl-harness-conformance-1480410392`. Verified real tool use, structured results, live adapter recreation against a running guest job, cross-directory explicit session resume, an independent supervisor session, coordinator cancellation and recovery in the same session. Afterwards no `.credentials.json` existed in any guest harness home, and no job output or result contained the token. This is harness conformance, not a Claude-worker workflow run through the engine.
 - Setup documentation: the Install page now documents the `claude setup-token` process and credential references; the agent guide tells agents never to request or print the token.
+
+## Nineteenth pass: parallel acceptance, live interaction, publication objects, recovery
+
+Work was merged into `workflow-runtime` from isolated worktree branches. Each merge was followed by full `go test ./...`, `go vet ./...` and affected-package race tests, all passing.
+
+- **Real parallel-agent acceptance PASS** with Claude workers and supervisors: `TestRealParallelAgentsRetryMergeAndCoordinatorRestart`, 928.90s, `ENVCTL_PARALLEL_HARNESS=claude` with a `claude setup-token` file credential. State: `/var/folders/bd/mtrzdck92l10k6xpmqxtq2w00000gn/T/envctl-parallel-acceptance_0fdf6610a8722988c5acf6b7`, run `run_524daf7dd276a35c074f6828`, with `acceptance-cleaned.json`.
+  - Live overlap in distinct child VMs.
+  - Coordinator/backend recreation while both real workers ran.
+  - The left branch failed its fixed check, then retried and checkpointed while the original right attempt (`attempt_ee4438e9b3db97751f7c80a5`) stayed live and isolated.
+  - A verified merge retained both input SHAs, with the explicitly selected left dataset.
+  - QA passed after the original host source had been deleted.
+  - Five runtimes had distinct Docker daemons (parent, left, right, merge, QA). All were removed by the fixture.
+- **Test-harness deadlock found and fixed.** Earlier Codex (PID 51469) and Claude runs both stalled right after overlap. The restart helper's goroutine sent to the shared `done` variable, which `stopEngine` sets to nil before waiting. A goroutine dump showed the send blocked on a nil channel; the engine itself had stopped promptly. The helper now sends on its own channel (`1b58d19`). Those two runs' VMs (`envctl-rev-a863883712c7ed0194d20f15*`, `envctl-rev-d1d5df4924c05c0fdb05b4a1*`) remain for manual deletion.
+- **Live steering and progress.**
+  - Running attempts expose bounded, redacted progress parsed from Codex and Claude event streams.
+  - Messages reach a running agent by durable interrupt-and-resume of the same harness session, limited to 8 resumes per role per attempt.
+  - Supervisors see all stage messages. The TUI and `run show` show delivery status.
+  - **Real Claude steering PASS**, `TestRealLiveSteeringResumesRunningClaudeWorker`, 12.7s, state `/var/folders/bd/mtrzdck92l10k6xpmqxtq2w00000gn/T/envctl-steering-acceptance-1541908574`.
+  - Follow-up `9f48608`: progress is stored outside the versioned run document (a `progress` table overlaid on reads, stripped on writes). Writing it every few seconds had bumped the run version and would make version-fenced TUI/CLI commands conflict.
+- **Per-node budgets.** `limits: {max_attempts, attempt_seconds}` on a node overrides the revision-wide values; digests are unchanged when unset. This also fixed an engine bug: an exhausted node moved the revision to needs-attention even while a sibling with remaining budget was waiting out its retry backoff, stranding the sibling. Fan-out rewind tests confirm branch-local rewind reuses the unaffected sibling checkpoint, invalidates the join and QA, and drains in-flight work historically.
+- **Submodule and Git LFS publication.** The broker validates the retained companion, verifies committed gitlinks and LFS pointers, and publishes changed submodules deepest first: `git lfs push`, a create-only branch and a reconciled draft PR in the submodule repository. It uploads the root's LFS objects before the root branch. Verified with local bare repositories and `git-lfs` 3.7.1 file:// remotes only. Real GitHub LFS/submodule publication has not been exercised.
+- **VM restart and restore-crash recovery.**
+  - Readiness restarts a stopped owned VM under its reservation and refuses a changed Docker identity.
+  - Terminal dataset jobs get durable recovery generations with evidence, backoff and budget.
+  - Guest source preparation discards receipt-less partial worktrees and serializes with orphaned scripts using `flock`.
+  - **Real PASS**, `TestRealGuestRestartAndRestoreCrashRecovery`, 146.28s, dedicated VM destroyed. State: `/var/folders/bd/mtrzdck92l10k6xpmqxtq2w00000gn/T/envctl-restart-acceptance_83003d8328f449f8df20fd5f`. It covered VM stop/start with the same daemon and healthy stack with intact volume data, coordinator death during a live PostgreSQL restore, and a SIGKILLed restore replaced by exactly one generation-1 job.
+- **Codex credentials.** OpenAI's CI/CD guidance forbids sharing one `auth.json` across machines or concurrent jobs (refresh-token rotation), which the Codex adapter currently does per guest role home. The Install page now directs Codex users to API keys. Whether to enforce API-key-only Codex credentials awaits the user's decision.
+- **Regression tests.** Non-terminal and `--json` invocations never launch the TUI or touch coordinator state. The TUI plugin attach/remove keys submit revision- and version-bound actions.

@@ -105,6 +105,10 @@ func parsePS(out string) ([]PSEntry, error) {
 	return entries, nil
 }
 
+// ParsePS applies the same Compose status decoder to output collected through
+// a guest transport, without querying the developer's Docker daemon.
+func ParsePS(out string) ([]PSEntry, error) { return parsePS(out) }
+
 // Project is one row of `docker compose ls --format json`.
 type Project struct {
 	Name        string `json:"Name"`

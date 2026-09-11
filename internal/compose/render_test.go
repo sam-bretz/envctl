@@ -2,6 +2,7 @@ package compose
 
 import (
 	"context"
+	"github.com/compose-spec/compose-go/v2/types"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,28 @@ import (
 	"github.com/sam-bretz/envctl/internal/manifest"
 	"github.com/sam-bretz/envctl/internal/ports"
 )
+
+func TestTransformPreservesGuestPathsWithoutHostAccess(t *testing.T) {
+	guestPath := "/work/envctl/revisions/rev_test/attempts/attempt_code/app"
+	project := &types.Project{Services: types.Services{"app": types.ServiceConfig{
+		Name: "app", ContainerName: "fixed", Build: &types.BuildConfig{Context: guestPath, Dockerfile: "Dockerfile"},
+		Volumes: []types.ServiceVolumeConfig{{Type: "bind", Source: guestPath, Target: "/app"}},
+		Ports:   []types.ServicePortConfig{{Target: 8000, Published: "8000"}},
+	}}}
+	raw, result, err := Transform(project, Options{Project: "envctl-revision", Env: "rev_test", Backend: "lima", Mode: ModeDomains})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), guestPath) || project.Services["app"].ContainerName != "envctl-revision-fixed" || project.Services["app"].Labels[LabelBackend] != "lima" {
+		t.Fatal("guest project was not transformed correctly")
+	}
+	if len(project.Services["app"].Ports) != 0 || len(result.Services) != 1 {
+		t.Fatal("shared render transformations were skipped")
+	}
+	if result.File != "" || result.EnvFile != "" {
+		t.Fatal("pure transformation unexpectedly wrote files")
+	}
+}
 
 const sample = `services:
   postgres:

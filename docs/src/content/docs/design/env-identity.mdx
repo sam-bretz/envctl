@@ -3,7 +3,7 @@ title: Environment identity
 description: Design note. An environment has a name; the branch is an attribute it can be linked to and unlinked from.
 ---
 
-Status: decided 10 September 2026, to be implemented at the start of milestone 2, before any VM backend code.
+Status: named local environments and branch metadata implemented 10 September 2026. Remote storage and CI behavior below remain proposals. The [workflow runtime plan](/docs/design/workflow-runtime/) adds separate run/revision identities and a daemon; this note describes the existing environment lifecycle, not the complete future workflow model.
 
 ## Problem
 
@@ -27,7 +27,7 @@ envctl env list                            # name, backend, linked branch, datas
 envctl env rm preview-billing              # destroy
 ```
 
-`--env` replaces `--env`; `--env` stays as a deprecated alias for one release. Names follow the same slug rules as today: lowercase, `a-z0-9-`, at most 40 characters, unique per project prefix per backend.
+`--env` replaces `--feature`; `--feature` stays as a deprecated alias for one release. Names follow the same slug rules as today: lowercase, `a-z0-9-`, at most 40 characters, unique per project prefix per backend.
 
 ## What is recorded
 
@@ -38,7 +38,7 @@ envctl env rm preview-billing              # destroy
 | `s3://<bucket>/envs/<env>/env.json` (vm) | the same document, so state survives an instance rebuild |
 | Container labels | `dev.envctl.env` replaces `dev.envctl.feature`; the old label is written too for one release |
 
-There is still no server. `envctl env list` reconciles tags, labels, and the JSON documents.
+The existing local lifecycle has no server. Remote tag reconciliation is planned. Workflow runs will use the daemon and registry described in the workflow runtime plan.
 
 ## How linking drives CI
 
@@ -51,4 +51,4 @@ The preview workflow keys on environment name, not branch. On a push to branch B
 - Labels gain `dev.envctl.env`.
 - The `WorktreeCreate` hook is unchanged: a Claude worktree gets an environment named after its branch.
 
-This is a rename while milestone 1 is fresh and a migration after milestone 3 ships, which is why it goes first.
+The local rename is implemented. Workflow runs build on this environment metadata with separate run/revision IDs; they do not use branch linking to change pinned inputs during execution.

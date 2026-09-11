@@ -1,0 +1,385 @@
+---
+title: Workflow runtime implementation plan
+description: Bubble Tea workflows, executable planning, invocation plugins, VM isolation, and checkpointed execution.
+---
+
+Status: implementation plan, revised 11 September 2026. Bubble Tea and the product direction are accepted. Partial implementation exists in the workspace; this document defines the target contract, not a claim that every capability is delivered. Delivery order and acceptance criteria are in the [roadmap](/docs/roadmap/).
+
+## Product contract
+
+envctl becomes a CLI with a primary terminal UI built using **Bubble Tea**. Its workspace is a persistent workflow run: an objective, a configurable DAG, pinned repositories, an isolated stack, supervisor and worker agents, and reviewable checkpoints.
+
+```text
+Task -> Plan -> Design -> Code -> QA -> Approved change
+```
+
+Each executing run revision owns a VM, Docker daemon, Compose stack, repositories, and writable data. Multiple runs must not share a Docker daemon. A run can execute locally or remotely; remote runs expose an application preview URL and can be observed by teammates.
+
+The workflow engine owns transitions. Agents produce artifacts and evidence, and the supervisor reviews alignment with the task, plan, and design. An agent ending a turn does not end its assigned stage. Clients can disconnect without cancelling work.
+
+**Plan is an executable readiness contract.** Missing known credentials, harness connections, tools, datasets, permissions, or unresolved requirements prevent Plan from completing. Downstream execution with an unresolved declared dependency is an invalid transition, not an expected stage outcome.
+
+## Decisions governing implementation
+
+These decisions translate the product direction into reviewable implementation constraints:
+
+| Decision | Implementation consequence |
+| --- | --- |
+| Bubble Tea is the primary experience. | UI state renders coordinator events; CLI commands and UI actions use the same mutation API. Closing a client never cancels an assignment. |
+| The workspace is a configurable workflow run. | The six stages are a template. Scheduling uses declared dependencies and required artifacts rather than hard-coded stage positions. |
+| Plan owns foreseeable setup. | A missing harness connection, dataset, permission, or tool is an unresolved planning requirement. The engine rejects downstream admission until actual probes pass. |
+| Plugins can be attached to an invocation. | Resolve and pin the changed binding set, identify affected nodes, prepare it, and rerun probes. Preserve the binding set of any active assignment through its checkpoint. |
+| Each executing revision has an isolated runtime. | Give it a dedicated VM and Docker daemon, pinned repository inputs, and private writable data. Provider configuration can change placement without weakening this contract. |
+| Checkpoints support continuous review. | Viewing evidence does not pause execution. Approval gates are explicit node policies; ordinary checkpoints advance automatically after verification and supervisor acceptance. |
+| Rewind preserves ongoing work. | Create a revision and invalidate its affected descendants. Superseded work finishes its current stage historically and cannot publish into the new revision. |
+
+The first integrated demonstration should be one two-repository feature with seeded data and browser QA. It must start with an unresolved browser capability, resolve it through invocation attachment, complete all six stages, and then support an active rewind with both histories visible. This demonstration connects the architecture to the interactions in both sketches.
+
+## Model and ownership
+
+| Concept | Responsibility |
+| --- | --- |
+| Workflow definition | Versioned nodes, dependencies, artifact schemas, checks, and review policies. |
+| Run | Stable ID, name, description, task reference, priority, owner, and history. Branch names are attributes. |
+| Revision | Immutable specification, repository bases, plugin set, and input lineage for an execution. |
+| Stage attempt | Worker assignment, input checkpoints, progress, retry history, and proposed output. |
+| Checkpoint | Immutable artifacts, repository commits, evidence, supervisor assessment, and applicable approval. |
+| Runtime | Provider, VM identity, local/remote location, resources, Compose configuration, datasets, and endpoints. |
+| Capability binding | Requirement resolved to a pinned plugin, configuration, credential reference, and readiness evidence. |
+
+A logical run can have a current revision and older draining revisions. A single coordinator owns a revision and reconciles its child runtimes independently. Run, revision, attempt, and operation IDs are separate from Git branches and display names.
+
+Each repository entry records its remote, immutable base SHA, working branch, checkpoint SHA, and PR output. There can be multiple repository branches and PRs; the TUI shows a primary branch with expandable details.
+
+## Plan establishes readiness
+
+Task intake identifies the outcome and acceptance criteria. Bootstrap checks establish the minimum needed to start planning: runtime provisioning access, source access, and a usable agent harness. The planner cannot acquire the credentials needed to launch itself.
+
+During Plan, the supervisor and worker must:
+
+1. Resolve task ambiguity and contradictory requirements into explicit decisions.
+2. Inspect repositories and enumerate requirements for every downstream node, including QA and PR publication.
+3. Resolve requirements to built-in capabilities or invocation plugins.
+4. Prepare the runtime, install pinned tools, bind credentials, and restore required test fixtures.
+5. Probe actual operations from the execution VM under the identity that will perform them.
+6. Record evidence and recovery strategies for renewable credentials and transient failures.
+7. Produce the implementation plan and a readiness report covering the remaining DAG.
+
+| Requirement | Evidence before Plan completes |
+| --- | --- |
+| Repositories | Required SHAs available, submodules/LFS resolved where applicable, writable output branches established. |
+| Agent harness | Worker and supervisor adapters authenticate and perform a minimal operation. |
+| Compose stack | Required health checks pass and endpoints are reachable from the worker. |
+| Dataset | Version/checksum recorded; restore and application-level validation succeed. |
+| Browser/test tools | Required binaries installed; representative smoke operation succeeds. |
+| External systems | Required operations and isolation namespace validated, beyond presence of an environment variable. |
+| Git/PR destination | Destination and authorization verified with non-publishing checks where possible; publication remains separate. |
+| Human decisions | Scope and acceptance criteria resolved; later approval gates explicitly identified. |
+
+The readiness report maps downstream nodes to capability bindings and probe evidence. Record timestamps, expiry/refresh policies, configuration digests, plugin versions, and runtime identity. Never store secret values in it.
+
+The engine validates the report; an LLM assertion is insufficient. Plan remains active while setup or decisions are missing. The UI identifies the exact planning item and supports resolving it there.
+
+The admission invariant is explicit: **a downstream assignment cannot be dispatched unless its accepted Plan covers every required capability, each binding matches the revision's lock and runtime, and its required probe evidence is successful and current**. Plan completion additionally requires resolved scope decisions and declared acceptance checks for every required terminal outcome. A missing binding is actionable planning work; it is never an accepted Plan followed by a predictable Code or QA failure.
+
+Implement the requirement inventory as structured records containing the consuming nodes, required operation, selected binding, preparation status, probe receipt, validity period, and recovery policy. The readiness view renders those records directly. Adding a plugin reruns dependency resolution and the affected probes; installation alone cannot close a planning item. Resource availability and credentials needed to launch the planner are checked at bootstrap, while the planner establishes readiness for the rest of the workflow.
+
+Planning has three observable conditions: **discovering requirements**, **resolving requirements**, and **ready for checkpoint**. These are conditions of Plan, not extra DAG nodes. A requirement inventory is complete only when every required downstream node has declared its inputs, capabilities, checks, and publication or approval needs. The supervisor must challenge the inventory against the acceptance criteria before the engine checks its evidence.
+
+| Situation | Required behavior |
+| --- | --- |
+| Known harness or credential missing | Keep the planning item open; do not admit Design, Code, or QA. |
+| Plugin resolves a planning item | Prepare and probe the binding, update the candidate lock, then reconsider Plan completion. |
+| Plugin attached after Plan completed | Create a revision, reopen affected planning work, and invalidate dependent evidence; preserve the old worker's bindings. |
+| Previously verified service becomes unavailable | Revalidate and recover the binding before dispatch; record evidence and any required external action. |
+| New requirement discovered during execution | Record the discovery and amend Plan through a revision; no silent expansion of the worker's capabilities. |
+
+For example, a billing-export task needs a browser, seeded PostgreSQL data, an authenticated coding harness, and a PR destination. Plan installs or binds all four and exercises their required operations. Adding a browser plugin is not enough: its guest-side smoke check must succeed. The resulting readiness report names the QA node it enables and the binding version it tested.
+
+Before each stage, recheck volatile bindings. A subsequent outage or revoked credential is readiness drift: automatically refresh, reprovision, retry with backoff, or use an already permitted fallback. If an external action is needed, keep the run visible as recovering with a precise request; do not enter the affected stage or mark it complete. Preflight cannot guarantee that an external service stays available forever.
+
+New requirements discovered during Design or Code amend the plan and invalidate affected readiness evidence. Agents cannot continue on undeclared assumptions. Current work reaches a safe recorded boundary; revised execution passes planning checks before dependent work starts.
+
+## Plugins belong to invocations
+
+Project configuration supplies defaults. An invocation can add plugins without changing project configuration. Plugins may supply harnesses, external integrations, browser/test tools, dataset operations, or environment preparation. Runtime provisioning uses a distinct provider contract; its selected version is also recorded.
+
+Start with a versioned executable protocol using structured JSON requests/responses. Do not load arbitrary Go plugins into the daemon. Initial adapters can be bundled executables; a marketplace and arbitrary remote package installation are outside the first release.
+
+A plugin descriptor declares:
+
+- Identity, version/digest, protocol version, platforms, and capabilities.
+- Configuration schema, credential references, prerequisite capabilities, and scope.
+- Lifecycle operations: describe, prepare, probe, execute, renew when applicable, and cleanup.
+- Idempotency/recovery behavior and external resources created by operations.
+- What runs in the guest and what needs a separate provisioning or publication broker.
+
+Resolve transitive requirements, reject cycles/conflicting bindings, and pin selected versions. Attaching a plugin does not implicitly grant broader credentials. Preparation runs inside the VM by default. Infrastructure and publication operations use corresponding brokers.
+
+Target configuration shape; individual fields and commands must be checked against the implementation before use:
+
+```yaml
+version: 2
+project: example
+repositories:
+  - id: api
+    url: https://example.com/team/api.git
+    ref: main # resolved once to a full SHA in the invocation lock
+    branch: feat/billing-export
+    publication:
+      provider: github
+      repository: team/api
+      base: main
+runtime:
+  provider: local-vm
+  isolation: dedicated-vm
+plugins:
+  - id: browser-tests
+    source: ./tools/browser-tests
+    version: "1.0.0" # source digest also recorded
+    provides: [browser.test]
+workflow:
+  template: feature
+  nodes:
+    qa:
+      needs: [code]
+      requires: [browser.test, dataset.restore]
+```
+
+Templates supply complete node definitions; overrides are merged and validated. Nodes declare dependencies, inputs, capabilities, output schemas, verification commands, retry policies, and optional human gates. Reject unknown dependencies, cycles, unreachable required outputs, and missing bindings before dependent execution.
+
+Implemented experimental attachment operations (local executable packages; no registry lookup yet):
+
+```text
+envctl run create --task "Add billing exports" --plugin-file browser-tests.yaml
+envctl run plugin add <run> --file issue-tracker.yaml
+envctl run plugin remove <run> --id issue-tracker
+envctl run readiness <run> --json
+```
+
+During Plan, attachment updates the candidate invocation lock and reruns readiness checks. After a Plan checkpoint, adding/removing/upgrading/rebinding a plugin creates a revision and invalidates affected readiness and descendants. The current worker keeps its original bindings through its checkpoint. New bindings never silently alter its environment. Reattaching an identical binding is idempotent.
+
+The current conservative implementation creates a new revision for every changed attachment, including changes while Plan is running. A reference file contains the same `id`, `source`, `version`, optional capability subset, `config`, and credential references as an item in `plugins`. Relative package and credential-file paths resolve against the reference file. The coordinator retains exact package bytes; changing or deleting the original package cannot change an admitted revision. Bubble Tea uses `p` to enter a reference-file path and `P` to remove a plugin ID, with bindings shown in Readiness.
+
+Executable packages contain `plugin.json` with protocol version 1, command arguments, capabilities, prerequisites, supported Linux platforms, optional configuration schema, and lifecycle operations. Requests and responses use JSON on standard input/output. The guest gives each package an immutable root-owned directory and a separate `ENVCTL_PLUGIN_STATE` directory. Operation IDs survive coordinator disconnects; plugins must use those IDs to reconcile their own external effects. Credentials arrive on stdin and are redacted from returned evidence. Protocol/transport failures remain failed readiness work; they never satisfy Plan through a worker's prose. Built-in verification and publication capabilities cannot be replaced by an invocation plugin's claim.
+
+The guest now distinguishes proven terminal process/protocol failures from transport interruptions. Terminal failures retain sanitized evidence and advance a durable process generation after backoff, preserving the external operation ID so the plugin can reconcile effects. Unknown outcomes reconnect to the existing guest job. Recovery is bounded by the invocation's attempt limit, after which Plan amendment is required; exhaustion does not admit downstream work. Completed lifecycle receipts are archived before a fresh probe replaces them. A failed probe can now request `recovery: "prepare"` or `recovery: "renew"` when its descriptor declares that operation. The coordinator journals the failed probe and prior lifecycle identity before dispatch, reconnects to pending repair and verification jobs, and requires a fresh passing probe. Recovery cycles have backoff and an invocation attempt budget; successful preparation alone never restores readiness. The built-in browser requests preparation when its tools volume or pinned image disappears. Failed probes without a recovery request remain unresolved connection work.
+
+If a plugin changes the graph, treat that as a definition revision: validate the whole DAG and display affected nodes before scheduling. Audit attachment, preparation, probe, and removal separately from chat.
+
+Pending plugin operations reconnect using their original root-private guest request. Reconnect verifies the command, environment, timeout, revision, operation, configuration and inputs; it permits credential values to have changed without rebinding the running process. Removing a host credential reference's current value cannot prevent observation of already submitted work. Only a new operation or a new process generation resolves current credential values. The original guest wrapper redacts its own credentials before returning results, including when the host no longer has those values. A missing request permits fresh submission; transport failure, mismatched inputs, or a damaged receipt do not. Durable unstarted intent reconciles its existing unit identity; interrupted execution is not silently replayed.
+
+New Plan invocations return a structured `requirements` array alongside their artifacts. Each entry names a capability, affected DAG nodes, and a reason. The supervisor reviews that inventory as part of the exact work product; the coordinator retains discovered obligations and includes them in executable readiness. A missing newly discovered connection holds the completed Plan proposal without repeating its worker or admitting downstream stages. CLI `run readiness`, Bubble Tea Readiness, checkpoint review, and comparisons expose the inventory.
+
+These entries can add obligations but cannot waive configured requirements or claim passing probes. Retries retain known obligations. Rewinds with the same objective and DAG preserve them, including plugin attachment; an amended objective or DAG reopens planning and permits scope to be reconsidered. Already submitted jobs retain their frozen output schemas on reconnect. This makes requirement discovery enforceable once reported; an agent can still overlook a requirement, so independent supervisor review and volatile probes remain necessary.
+
+## Checkpoints and progression
+
+| Stage | Required output |
+| --- | --- |
+| Task | Objective, task source, scope, acceptance criteria. |
+| Plan | Spec, implementation outline, capability map, successful readiness report. |
+| Design | UX and technical decisions, tradeoffs, evidence, or explicit applicability decision. |
+| Code | Commits, implementation notes, traceability to plan/design. |
+| QA | Test results tied to exact commits, acceptance evidence, defect disposition. |
+| Approved change | Approval tied to exact revision/commits, plus verified PR URL(s). |
+
+Every completed stage is reviewable. Intermediate stages advance automatically by default; users can configure human gates. Final approval is a human gate by default, and draft PR preparation can precede it. PR creation and approval are separate facts.
+
+Advance only after outputs, deterministic checks, supervisor assessment, and configured approvals pass. Failed tests trigger further work. Repeated no-progress attempts trigger a different recovery strategy, not completion. Declared invocation resource limits remain enforced and visible.
+
+Attempt states include pending, preparing, running, verifying, and checkpointed. Recovery and awaiting configured approval are explicit conditions. Superseded, cancelled, and failed attempts remain historical. A run completes only when all required terminal nodes are satisfied.
+
+The supervisor receives pinned task/plan/design artifacts, worker progress, tool results, and concise summaries. Workers can start fresh sessions at stage boundaries. Neither agent bypasses transition predicates. Authoritative approvals and publication are controlled outside the worker's writable environment.
+
+### Implemented explicit joins
+
+Configuration validation follows source ownership through the DAG. If incoming paths may contain different repository commits, the joining node must declare `join.repositories`, writable ownership, and executable checks. This catches a predictable missing merge contract before Plan or any downstream assignment starts. Read-only branches with the same source origin need no repository merge policy.
+
+For example, this node combines two declared predecessor nodes in a custom workflow:
+
+```yaml
+merge:
+  kind: code
+  needs: [api, ui]
+  writes: [app]
+  outputs: [merge-report]
+  join:
+    repositories:
+      app: api
+    datasets:
+      billing: api
+  checks:
+    - name: integration
+      repository: app
+      command: [make, integration-test]
+```
+
+The `app` worktree starts at the `api` commit. Both incoming histories and offline input copies are available to the worker, which must merge all incoming SHAs and resolve conflicts against the accepted plan/design. The coordinator independently imports the retained output bundle into a temporary bare Git repository and verifies every required ancestor. It ignores ambient Git configuration and replacement refs. Tests and supervisor review assess merged behavior; ancestry alone does not prove a correct resolution. `merge_parents` is part of the work digest and is visible in checkpoint and comparison views.
+
+`join.datasets` explicitly names the predecessor snapshot to restore for each configured dataset. It does not combine databases. Multi-input nodes with datasets must declare those choices before execution; a missing selected snapshot is an error. A different data-combination policy needs a dedicated adapter and verification contract.
+
+The local backend now supports parallel branches using independent child VMs. The real guest join component test covers divergent source retention, conflict resolution, replay preservation and independent input copies. A separate two-VM test covers source, Docker daemon, Compose data, quiescence, replay and teardown isolation. A complete real-agent fan-out/join demonstration remains required for M7 acceptance.
+
+### Child runtimes for parallel execution
+
+With `limits.parallel > 1`, Task and Plan use the revision runtime. Each downstream node reserves a child VM before its first attempt and retains that VM across retries, preserving the worker session and private recovery source. Each child has its own Docker daemon, Compose stack, mutable datasets, plugin receipts and readiness evidence. Baseline source archives can be reused by digest; writable files and application data are never shared.
+
+```yaml
+limits:
+  parallel: 2
+  vms: 3
+  max_attempts: 12
+  attempt_seconds: 1800
+```
+
+This example permits a parent and two child VMs. `vms` counts reservations, executing children, completed runtimes retained for inspection, and older draining revisions. A smaller VM limit can reduce effective parallelism. At least two VM slots are required for parallel mode. Reservation and attempt creation occur in one transaction; an unconfirmed release never frees capacity.
+
+Child attempts remain `preparing` until their own capabilities have current passing probes. A parent probe cannot authorize a child. Provisioning, readiness and reconnect operations have separate per-child locks and recovery state, so a slow branch does not stop a sibling. Both worker and supervisor execute in that child's VM. Child requests to invocation plugins include `runtime_id`; plugins that allocate external mutable resources must use this isolation namespace. Existing revision-only request identities remain unchanged in serial mode.
+
+Intermediate children are released after accepted checkpoints retain their repository/data evidence. The last live application runtimes of a completed current run remain available for inspection. Rewind gives the replacement revision fresh ownership and releases historical children after their current work drains; explicit cancellation releases completed runtimes as well. Checkpoint history remains retained. The Services and Readiness panels show the selected node's child, and `run readiness` includes child status and evidence.
+
+## Rewind and restore
+
+Viewing a checkpoint does not change execution. Rewind creates a revision from a selected checkpoint and records amendments.
+
+If Code is running while the user changes Plan, the old worker continues toward its Code checkpoint with its original plan/plugins. Its result remains historical; it cannot start further stages or publish over the new revision. The amended revision restores selected inputs, revalidates readiness, and reruns affected descendants. Unrelated branches can reuse checkpoints only when complete input/capability identities match.
+
+Overlapping revisions use separate VMs and working branches. When capacity permits one VM, queue the new revision while the old one drains and display that state. Repeated rewinds supersede queued revisions and prevent them from starting accidentally.
+
+Rewind differs from explicit emergency cancel: users retain an immediate stop mechanism. Runtime failures use recovery; a promise to reach a checkpoint must not hide a dead process.
+
+Checkpoints record commits, artifacts, plugin locks, rendered configuration digest, dataset lineage, and restoration instructions. Preserve uncommitted work as an artifact when recovering failed attempts. Code checkpoints are not VM memory snapshots. Restore data with application-consistent dumps or verified reconstruction; cross-service snapshots require a documented quiescence procedure. Resetting Git does not reverse external side effects.
+
+### Implemented local PostgreSQL data path
+
+The experimental PostgreSQL adapter seeds from an immutable Git blob and retains a custom-format dump plus tool-version and application-verification evidence outside the VM. Plan exercises both seeding and restoration before satisfying `dataset.restore`. Later stages restore their predecessor's dataset; their checkpoints bind retained data to the supervisor's reviewed result. Approved output retains the accepted QA dataset alongside its commit set.
+
+```yaml
+data:
+  quiesce: [api, worker] # all application services that can write during capture/restore
+  datasets:
+    - id: billing
+      adapter: postgres
+      service: postgres # exactly one running Compose container
+      database: billing # application database, not postgres/template databases
+      user: postgres
+      seed_repository: api
+      seed_file: fixtures/billing.sql
+      verify_sql: SELECT EXISTS (SELECT 1 FROM invoices)
+      verify_equals: "t"
+```
+
+The selected database role must be provisioned in the container and able to create/drop the application database. Commands use the container's local PostgreSQL socket; a connection string cannot redirect restoration to a host or remote database. Restoration rebuilds the target database, so objects absent from the dump do not survive. The adapter checks the dump's checksum, format, configuration binding, tool version, and retained evidence before accepting restoration. SQL seeds are currently bounded to 1 MiB and dumps to 64 MiB.
+
+Writer quiescence has a durable ownership record. Readiness does not restart those services during an interrupted data operation; successful completion restarts them and waits for their health. A later failed application probe does not automatically overwrite a running worker's database. Multi-dataset configurations require an explicit writer list; the operator must include every writer, and the integrated cross-service consistency demonstration remains outstanding.
+
+This first adapter covers a database seeded under its configured role. Cluster-wide roles, original ownership/ACL replay, and generic third-party dataset adapters remain unfinished. The current dumps deliberately omit original ownership and grants; do not use this as proof of arbitrary PostgreSQL cluster restoration. `pg_dump` supplies a consistent single-database dump, while `pg_restore --single-transaction` makes loading that dump atomic inside the rebuilt database. [PostgreSQL dump documentation](https://www.postgresql.org/docs/18/app-pgdump.html), [restore documentation](https://www.postgresql.org/docs/18/app-pgrestore.html).
+
+The experimental `http-fixture` adapter now uses the same durable operation and artifact transport with its own snapshot format and application-record verification. `envctl run fixture init` scaffolds its pinned service and seed. The bundled `builtin:playwright` plugin prepares Chromium, probes the guest application, and executes commit-bound browser checks with screenshot evidence. Both have real VM component acceptance results; see the [fixtures guide](/docs/workflow-fixtures/) for configuration and limits.
+
+Invocation configuration can be amended without changing project defaults:
+
+```text
+envctl run rewind <run> --to plan --config workflow-revision.yaml
+```
+
+The file is a complete version 2 configuration. It creates a new revision, reopens Plan, and leaves the previous worker's frozen configuration intact.
+
+## Runtime, registry, and durability
+
+A daemon outside the agent VM is the authoritative coordinator for its runs. It persists commands, revisions, checkpoints, approvals, and operation receipts transactionally. SQLite is the initial local storage proposal; larger artifacts are stored separately by digest. A guest runner manages processes, journals progress, and executes the current assignment independently of the UI.
+
+TUI and CLI share a versioned API and resumable event stream. Clients have independent view state; mutations carry an expected revision and operation ID. One coordinator owns each run's mutations. A local registry can aggregate local/team coordinators without becoming a second writer for remote runs.
+
+Remote coordinators run independently of the developer's laptop. UI disconnection does not affect scheduling. If the coordinator itself is unreachable, the guest finishes and journals its current assignment; transitions/publication wait for reconciliation. After restart, reconcile operation receipts and actual resources before retrying. Do not assume exactly-once external side effects.
+
+Reuse Compose rendering/lifecycle inside each VM. Separate VM provisioning, Compose, repository preparation, datasets, plugins, and agent sessions into focused interfaces; do not put every workflow responsibility into `provider.Provider`.
+
+| Proposed package | Responsibility |
+| --- | --- |
+| `internal/workflow` | Definitions, revisions, readiness predicates, scheduling, lineage. |
+| `internal/runstore` | Transactions, events, operation receipts, artifact references. |
+| `internal/daemon` | Commands, authorization, subscriptions, mutation ownership. |
+| `internal/engine` | Durable dispatch, reconciliation, recovery, and backend coordination. |
+| `internal/guestjob` | Guest process lifecycle, journal, reconnect/recovery. |
+| `internal/runtime` | VM provider contract and capability reporting. |
+| `internal/repository` | Source pins, guest checkouts, commits, output branches. |
+| `internal/plugin` | Descriptors, invocation resolution, lifecycle, readiness evidence. |
+| `internal/agent` | Harness adapters, structured progress, continuation. |
+| `internal/checkpoint` | Capture, restoration, dataset consistency. |
+| `internal/tui` | Bubble Tea views and API client; no scheduling ownership. |
+
+Evaluate Lima through a bounded local-provider spike: dedicated daemon, host mount isolation, networking, restart, and resource cost on supported architectures. Pin the guest image/toolchain. Implement EC2 first remotely to build on existing direction, with AWS details outside definitions and a contract other providers can implement.
+
+Workers receive no shared host Docker socket or writable host source mounts. Isolate run networks. Intentionally shared external systems must be declared and visible; VM isolation alone does not isolate SaaS tenants or shared databases.
+
+The local backend now retains complete baseline repository archives by source URL and immutable commit outside disposable VMs. A revision with a known pin verifies and reuses that archive without fetching its original checkout or remote. An unpinned invocation still resolves its current source ref first. Retention preserves the baseline Git metadata, fetched LFS objects, and submodule object stores; checkpoint bundles supply later source commits. Missing or corrupt retained archives are explicit preparation failures. New checkpoints also retain a companion artifact containing exact LFS bytes and Git bundles for nested submodules. The main bundle and companion are bound into supervisor review and checked for retention before checkpoint acceptance. Fresh assignments hydrate submodules into their own repositories from those bundles, verify parent gitlinks and LFS hashes, and do not fetch submodule remotes. Recursive capture commits writable module changes before updating their parent gitlinks; read-only nested edits are rejected. Replaying an already admitted assignment preserves its live edits.
+
+Local and real-guest tests now cover nested modules with spaces in their paths, new module/LFS additions, independent assignment files, and reconstruction after the original sources and earlier revision are deleted. Hydration uses atomic file/directory replacement and resumes after process death; retained artifacts can repair a damaged guest object cache. The companion format is version 1, limited to 64 MiB and 256 repository entries per root repository. Main-source diffs show gitlink changes, while companion identities appear in checkpoint review and their bytes are available through artifact APIs. Publication of new LFS objects and new submodule commits still needs broker integration; successful local restoration does not establish that remote Git objects are available.
+
+Dataset adapters start with one concrete database and one emulator fixture. Capture checksums, format/version, restore commands, and verification. Filesystem and remote object storage use the same dataset manifest.
+
+Publishing a local checkpoint remotely recreates a preview from pinned commits, images, and data; it does not move an active worker. Active continuation remotely needs an explicit checkpoint-boundary ownership handoff. Retention preserves checkpoint artifacts after VM deletion. Reapers respect active, recovering, approval-waiting, and kept runs.
+
+The initial GitHub publication broker runs on the coordinator. An explicit repository `publication` target separates a local source path from its PR destination. Direct GitHub source URLs can infer the destination when `ref` names a base branch. Plan verifies repository permissions, source/base availability, PR access, and a non-publishing Git push; it locks the base SHA. Branch protections and later permission changes still require revalidation. The configured `branch` is an output prefix: the actual PR branch appends the revision ID; absent a prefix, use `envctl/<repository-id>/<revision-id>`. A broker never overwrites an existing branch with a different SHA. It verifies or creates a draft PR with an operation marker after exact-result approval. Unchanged dependency repositories remain in the approved commit set and do not require artificial PRs.
+
+## Bubble Tea interaction plan
+
+The first sketch (`IMG_1106.JPG`) supplies the stage strip, in-flight run list, focused conversation/artifact area, and bottom input targeting supervisor or worker. The second (`IMG_1107.JPG`) supplies registry sharing, independent agent pairs, branch metadata, and rewind lineage.
+
+| Sketch element | Product behavior | Delivery checkpoint |
+| --- | --- | --- |
+| Top stage/checkpoint strip | Navigate the selected DAG and inspect completed outputs without interrupting execution. | M1 shell; M5 complete review. |
+| In-flight workflow list | Select runs and see stage, branch, location, objective, and priority. | M1 shell; M4 live state. |
+| Focused chat and bottom recipient selector | Read evidence and steer the supervisor or assigned worker with revision-scoped messages. | M4. |
+| Separate worker/supervisor pairs and Docker stacks | Each executing revision owns its VM, agents, source, and writable stack data. | M2 and M4. |
+| Registry with several UIs | Clients keep independent selections while sharing authoritative run history. | M5 local clients; M6 teammate access. |
+| Arrow returning to Plan | Create a revision; retain the old stage's eventual checkpoint as history. | M5. |
+
+Show objective, stage, branch summary, local/remote location, preview availability, and priority. Details include repository pins, VM health, datasets, plugin bindings, readiness items, and PRs. Distinguish application preview URLs from a future workflow review URL.
+
+Implement conversation, checkpoint, changes, tests, services, and readiness views. Keyboard navigation is primary, with mouse support. Narrow layouts collapse the run list. Branching DAGs have an expandable graph. Status uses text/symbols as well as color.
+
+The sketch translates into this initial information hierarchy. Labels and dimensions are illustrative:
+
+```text
+Task -> Plan -> Design -> Code -> QA -> Approved change
+Runs: billing export [Plan] | login fix [QA] | search [Code]
+Selected: billing export | feat/billing-export | local | priority: normal
+Objective: export invoices as CSV with the agreed access rules
+---------------------------------------------------------------
+Conversation | Checkpoint | Changes | Tests | Services | Readiness
+Plan: resolving requirements
+  Ready: repositories, worker, supervisor, PostgreSQL fixture
+  Open: browser.test -> attach a plugin and run its probe
+---------------------------------------------------------------
+To: Supervisor / Worker                    Message or command >
+```
+
+Selecting an earlier stage opens its immutable checkpoint while execution continues. Rewind is a distinct action showing the affected descendants and creating a revision. A remote run adds its preview URL to the selected-run metadata; each repository's branch and PR remain inspectable. The shared registry in the second sketch supports independent client selection and review state, with a single authority for workflow mutations.
+
+The current Bubble Tea review controls include `[` / `]` for revision history, `,` / `.` to select a checkpoint artifact, and `o` to open it. Historical views cannot send mutations to the current revision. Checkpoint details show supervisor assessment, approval identity, repository commits, PRs, and dataset evidence. Async artifact results are scoped to the selected run/revision/stage/view; steering input is rejected if its target revision changes before submission.
+
+`d` now loads source comparison from retained Git bundles. Its default base is the revision's source pins; `b` selects a checkpoint as the base, allowing comparison across stages and historical revisions. `B` resets the base and Escape closes the loaded review. CLI `run diff` uses the same read-only API. A temporary bare Git object store reconstructs patches without a VM, source checkout, network access, or external diff drivers. Missing bundles and the 1 MiB per-repository preview limit are explicit. The comparison includes objectives, configuration identities, checkpoint summaries, checks/review/approval, and artifact/dataset identities; semantic database-row and binary-artifact comparison remain outside this implementation.
+
+Start the shell against recorded events, then connect the real API. Full terminal emulation is outside the first release: show structured events and offer explicit terminal attachment for supported harnesses. Record steering against a revision/recipient; specification changes use revision operations.
+
+## Compatibility and scope
+
+Version 1 manifests and lifecycle commands continue to work. Workflow configuration is versioned explicitly; unknown critical fields cannot silently disappear. Bare `envctl` launches Bubble Tea only in an interactive terminal. Retain legacy environment metadata and link it to run IDs where applicable; it cannot represent full workflow history.
+
+The first usable workflow release includes the six stages, configurable DAG validation, supervisor/worker execution, multiple pinned repositories, invocation plugins, Plan readiness, local VM execution, checkpoint review/rewind, and PR output. Serial execution is the default. M7 adds concurrent nodes in child VMs and explicit joins; its complete agent/conformance acceptance remains in progress.
+
+Defer phone/web clients, a marketplace, arbitrary workflow programming languages, Kubernetes, and live VM migration. These are not prerequisites for local or team workflows.
+
+## Research grounding
+
+- [Herdr concepts](https://herdr.dev/docs/concepts/) and [CLI reference](https://herdr.dev/docs/cli-reference/): persistent workspaces, detached clients, shared automation API.
+- [Slate architecture](https://randomlabs.ai/blog/slate): bounded worker results and preserved strategic context.
+- [Onyx](https://randomlabs.ai/blog/onyx#section-19): structured output, runtime-directed control flow, and goal-to-PR orchestration inform this design. Its orchestration VM is a programming-runtime concept; envctl separately requires an operating-system VM for Docker isolation. envctl must establish its own persistence and recovery guarantees.
+- [Bubble Tea](https://github.com/charmbracelet/bubbletea): selected Go TUI framework.
+- [Lima](https://lima-vm.io/docs/): candidate local VM implementation.
+- [Docker security](https://docs.docker.com/engine/security/): daemon authority motivates a VM per executing revision.
+
+References inform the design; readiness, plugin, and delivery contracts above are envctl decisions.

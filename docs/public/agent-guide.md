@@ -1,10 +1,24 @@
 # envctl agent guide
 
-Read this before helping someone set up or use envctl. It is the whole tool in one page.
+Read this before helping someone set up or use envctl. The local Compose commands are stable; the workflow interface below is experimental.
 
 ## What it is
 
-envctl gives each git worktree its own isolated docker-compose environment. It renders the repo's compose files into `.envctl/<feature>/compose.yaml` with a per-branch project name, no colliding host ports, and labels, then runs plain `docker compose` on that file. There is no server and no database.
+envctl gives each git worktree its own isolated docker-compose environment. The local Compose interface renders the repo's compose files into `.envctl/<feature>/compose.yaml` with a per-branch project name, no colliding host ports, and labels, then runs plain `docker compose` on that file. Those lifecycle commands do not require a daemon.
+
+## Experimental workflows
+
+Version 2 workflows use a persistent coordinator, Bubble Tea, and dedicated local VMs. Use `envctl run validate`, `envctl run create --task ...`, `envctl run readiness <run-id> --json`, and `envctl ui`. Keep existing version 1 configuration and lifecycle commands working when helping users migrate.
+
+Plan must verify downstream requirements before dependent execution. Attach a local executable package or the bundled Playwright package using `envctl run plugin add <run-id> --file browser.yaml`; attachments are frozen per invocation revision. Use `envctl run fixture init fixtures/http` to scaffold the HTTP dataset emulator, then commit the generated source and seed. PostgreSQL and HTTP fixture datasets retain checksum-verified snapshots outside the VM.
+
+In Bubble Tea, `[` / `]` browse revisions, `,` / `.` select artifacts, `o` opens them, and `p` attaches a plugin reference file. Browsing and detaching do not cancel execution. Historical views are read-only; rewind creates a new revision.
+
+Use `d` to compare a checkpoint against its revision's source pins. To compare checkpoints, select the earlier one, press `b`, navigate to the target (including another revision), then press `d`. `B` resets the base; Escape closes the loaded review. The CLI equivalent is `envctl run diff <run-id> --node code [--revision <revision-id>] [--from <checkpoint-id>] [--json]`. Source comes from retained bundles, with explicit unavailable/truncated results. Comparison includes checkpoint summaries, review/approval/check evidence and artifact/dataset identities; it does not compare database rows or binary artifact contents.
+
+Use `envctl run artifact <digest> --output <new-file>` to export checksum-verified evidence. Existing files are never overwritten. Agent-created temporary reports belong in the attempt's supplied scratch directory; read-only source stages must not add untracked report directories to repositories.
+
+This workflow backend remains experimental. Full rewind, parallel execution, provider expansion, and complete database metadata replay are not all delivered. Read [the fixtures guide](/docs/workflow-fixtures/), [the roadmap](/docs/roadmap/), and `docs/implementation-progress.md` before claiming support or milestone completion.
 
 ## Setup checklist
 

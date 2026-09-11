@@ -13,7 +13,9 @@ envctl status --json
 
 ```json
 {
-  "feature": "feat-thing",
+  "name": "feat-thing",
+  "branch": "feat/thing",
+  "kept": false,
   "project": "mg-feat-thing",
   "backend": "local",
   "running": true,
@@ -25,7 +27,9 @@ envctl status --json
     { "service": "api", "target": 8787, "host": "127.0.0.1", "port": 41001, "url": "http://127.0.0.1:41001/" }
   ],
   "env": [
+    "ENVCTL_ENV=feat-thing",
     "ENVCTL_FEATURE=feat-thing",
+    "ENVCTL_BRANCH=feat/thing",
     "ENVCTL_PROJECT=mg-feat-thing",
     "ENVCTL_BACKEND=local",
     "ENVCTL_PORT_MODE=registry",
@@ -70,7 +74,7 @@ The fields are Docker's own `compose ls` output filtered to this project's prefi
 envctl -C /path/to/worktree status --json
 ```
 
-`-C` changes the worktree envctl operates on, and the feature name follows that worktree's branch. Combine with `--feature` to address an environment whose worktree is gone.
+`-C` changes the worktree envctl operates on, and the feature name follows that worktree's branch. Combine with `--env` to address an environment whose worktree is gone.
 
 ## Discover environments without envctl
 

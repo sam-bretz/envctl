@@ -10,6 +10,7 @@ import (
 
 	"github.com/sam-bretz/envctl/internal/compose"
 	"github.com/sam-bretz/envctl/internal/dockerx"
+	"github.com/sam-bretz/envctl/internal/envstate"
 	"github.com/sam-bretz/envctl/internal/manifest"
 	"github.com/sam-bretz/envctl/internal/ports"
 	"github.com/sam-bretz/envctl/internal/provider"
@@ -57,9 +58,21 @@ func (p *Provider) Mode() compose.Mode {
 	}
 }
 
-// OutDir is where rendered files for a feature live: <repo>/.envctl/<feature>/.
+// OutDir is where rendered files for an environment live: <repo>/.envctl/<env>/.
 func (p *Provider) OutDir(spec provider.Spec) string {
-	return filepath.Join(p.Manifest.Dir, ".envctl", spec.Feature)
+	return filepath.Join(p.Manifest.Dir, envstate.Dir, spec.Env)
+}
+
+// record writes env.json, preserving fields set by `env create` / `env link`.
+func (p *Provider) record(spec provider.Spec) (*envstate.State, error) {
+	return envstate.Upsert(p.Manifest.Dir, spec.Env, string(provider.Local), func(s *envstate.State) {
+		if spec.Branch != "" {
+			s.Branch = spec.Branch
+		}
+		if spec.Kept {
+			s.Kept = true
+		}
+	})
 }
 
 func (p *Provider) render(ctx context.Context, spec provider.Spec) (*compose.Result, *ports.Registry, error) {
@@ -76,9 +89,14 @@ func (p *Provider) render(ctx context.Context, spec provider.Spec) (*compose.Res
 	if spec.ImageTag != "" {
 		extra["ENVCTL_IMAGE_TAG"] = spec.ImageTag
 	}
+	st, err := p.record(spec)
+	if err != nil {
+		return nil, nil, err
+	}
 	res, err := compose.Render(ctx, compose.Options{
 		Manifest: p.Manifest,
-		Feature:  spec.Feature,
+		Env:      spec.Env,
+		Branch:   st.Branch,
 		Project:  spec.Project,
 		Backend:  string(provider.Local),
 		Mode:     mode,
@@ -150,7 +168,7 @@ func (p *Provider) Down(ctx context.Context, spec provider.Spec, volumes bool) e
 			reg.Release(spec.Project)
 			_ = reg.Save()
 		}
-		return os.RemoveAll(p.OutDir(spec))
+		return envstate.Remove(p.Manifest.Dir, spec.Env)
 	}
 	return nil
 }
@@ -239,7 +257,7 @@ func (p *Provider) loadRendered(spec provider.Spec) (*compose.Result, error) {
 	dir := p.OutDir(spec)
 	file := filepath.Join(dir, "compose.yaml")
 	if _, err := os.Stat(file); err != nil {
-		return nil, fmt.Errorf("environment %s has not been rendered; run `envctl up`", spec.Project)
+		return nil, fmt.Errorf("environment %s has not been rendered; run `envctl up`", spec.Env)
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "env"))
 	if err != nil {
@@ -256,11 +274,15 @@ func (p *Provider) loadRendered(spec provider.Spec) (*compose.Result, error) {
 
 func (p *Provider) status(ctx context.Context, spec provider.Spec, res *compose.Result, query bool) (*provider.Status, error) {
 	st := &provider.Status{
-		Feature:  spec.Feature,
+		Name:     spec.Env,
+		Feature:  spec.Env,
 		Project:  spec.Project,
 		Backend:  provider.Local,
-		Env:      res.Env,
+		EnvLines: res.Env,
 		Rendered: res.File,
+	}
+	if rec, err := envstate.Load(p.Manifest.Dir, spec.Env); err == nil {
+		st.Branch, st.Kept = rec.Branch, rec.Kept
 	}
 	if !query {
 		return st, nil

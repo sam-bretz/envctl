@@ -47,12 +47,15 @@ envctl writes under `.envctl/<feature>/` in the worktree.
 | --- | --- |
 | `compose.yaml` | The rendered project. Regenerated on every `up` and `render`. |
 | `env` | `KEY=VALUE` lines described below. |
+| `env.json` | The environment record: name, backend, linked branch, dataset, parent, kept, timestamps. |
 
 ## Env file variables
 
 | Variable | Value |
 | --- | --- |
-| `ENVCTL_FEATURE` | Feature slug. |
+| `ENVCTL_ENV` | Environment name. |
+| `ENVCTL_FEATURE` | Deprecated alias of `ENVCTL_ENV`. |
+| `ENVCTL_BRANCH` | Linked branch, empty when unlinked. |
 | `ENVCTL_PROJECT` | Compose project name. |
 | `ENVCTL_BACKEND` | `local`. |
 | `ENVCTL_PORT_MODE` | `domains` or `registry`. |
@@ -65,7 +68,8 @@ Every rendered service carries:
 
 | Label | Value |
 | --- | --- |
-| `dev.envctl.feature` | Feature slug. |
+| `dev.envctl.env` | Environment name. |
+| `dev.envctl.feature` | Deprecated alias of `dev.envctl.env`. |
 | `dev.envctl.backend` | `local`. |
 | `dev.envctl.project` | Compose project name. |
 

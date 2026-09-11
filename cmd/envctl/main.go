@@ -17,6 +17,7 @@ import (
 
 	"github.com/sam-bretz/envctl/internal/backend/local"
 	"github.com/sam-bretz/envctl/internal/dockerx"
+	"github.com/sam-bretz/envctl/internal/envstate"
 	"github.com/sam-bretz/envctl/internal/feature"
 	"github.com/sam-bretz/envctl/internal/manifest"
 	"github.com/sam-bretz/envctl/internal/provider"
@@ -26,7 +27,8 @@ var version = "dev"
 
 type globals struct {
 	dir      string
-	feat     string
+	env      string
+	feat     string // deprecated alias of env
 	backend  string
 	portMode string
 	jsonOut  bool
@@ -52,17 +54,22 @@ func root() *cobra.Command {
 	}
 	pf := cmd.PersistentFlags()
 	pf.StringVarP(&g.dir, "dir", "C", ".", "directory inside the worktree to operate on")
-	pf.StringVar(&g.feat, "feature", "", "feature slug (default: derived from the git branch)")
+	pf.StringVar(&g.env, "env", "", "environment name (default: the git branch slug)")
+	pf.StringVar(&g.feat, "feature", "", "deprecated alias of --env")
+	_ = pf.MarkDeprecated("feature", "use --env")
 	pf.StringVar(&g.backend, "backend", "local", "backend: local (vm arrives in milestone 3)")
 	pf.StringVar(&g.portMode, "port-mode", "", "override ports.mode from the manifest: domains or registry")
 	pf.BoolVar(&g.jsonOut, "json", false, "print machine-readable JSON")
 
 	cmd.AddCommand(upCmd(g), downCmd(g), stopCmd(g), startCmd(g), statusCmd(g), renderCmd(g),
-		logsCmd(g), execCmd(g), listCmd(g), initCmd(g), hookCmd(g), agentCmd(g))
+		logsCmd(g), execCmd(g), listCmd(g), initCmd(g), hookCmd(g), agentCmd(g), envCmd(g))
 	return cmd
 }
 
-// resolve loads the manifest, derives the feature and builds the provider.
+// resolve loads the manifest, derives the environment and builds the provider.
+// The environment name defaults to the branch slug; the linked branch defaults
+// to the checked-out branch only for a default-named environment, so an
+// explicitly named one stays unlinked unless `env link` says otherwise.
 func resolve(ctx context.Context, g *globals) (provider.Provider, provider.Spec, error) {
 	m, err := loadManifest(ctx, g.dir)
 	if err != nil {
@@ -76,20 +83,26 @@ func resolve(ctx context.Context, g *globals) (provider.Provider, provider.Spec,
 			return nil, provider.Spec{}, fmt.Errorf("--port-mode must be domains or registry, got %q", g.portMode)
 		}
 	}
-	feat := g.feat
-	if feat == "" {
-		feat, err = feature.Detect(ctx, g.dir)
+	name := g.env
+	if name == "" {
+		name = g.feat
+	}
+	spec := provider.Spec{Backend: provider.Backend(g.backend)}
+	if name == "" {
+		name, err = feature.Detect(ctx, g.dir)
 		if err != nil {
 			return nil, provider.Spec{}, err
 		}
+		if b, err := feature.Branch(ctx, g.dir); err == nil && b != "" {
+			if _, err := envstate.Load(m.Dir, name); err != nil {
+				spec.Branch = b // first sight of a default-named env: link it to its branch
+			}
+		}
 	} else {
-		feat = feature.Slugify(feat)
+		name = feature.Slugify(name)
 	}
-	spec := provider.Spec{
-		Feature: feat,
-		Project: feature.ProjectName(m.Project, feat),
-		Backend: provider.Backend(g.backend),
-	}
+	spec.Env = name
+	spec.Project = feature.ProjectName(m.Project, name)
 	switch spec.Backend {
 	case provider.Local:
 		p, err := local.New(ctx, m)
@@ -117,7 +130,7 @@ func upCmd(g *globals) *cobra.Command {
 	var build, noWait bool
 	cmd := &cobra.Command{
 		Use:   "up",
-		Short: "Render and start (or converge) this feature's environment",
+		Short: "Render and start (or converge) this environment",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p, spec, err := resolve(cmd.Context(), g)
 			if err != nil {
@@ -141,7 +154,7 @@ func downCmd(g *globals) *cobra.Command {
 	var volumes bool
 	cmd := &cobra.Command{
 		Use:   "down",
-		Short: "Remove this feature's containers and network (data kept unless --volumes)",
+		Short: "Remove this environment's containers and network (data kept unless --volumes)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p, spec, err := resolve(cmd.Context(), g)
 			if err != nil {
@@ -182,7 +195,7 @@ func startCmd(g *globals) *cobra.Command {
 
 func statusCmd(g *globals) *cobra.Command {
 	return &cobra.Command{
-		Use: "status", Short: "Show services, endpoints and env for this feature",
+		Use: "status", Short: "Show services, endpoints and env for this environment",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p, spec, err := resolve(cmd.Context(), g)
 			if err != nil {
@@ -246,26 +259,64 @@ func execCmd(g *globals) *cobra.Command {
 
 func listCmd(g *globals) *cobra.Command {
 	return &cobra.Command{
-		Use: "list", Short: "List every environment of this project on the Docker host",
+		Use: "list", Short: "List every environment of this project: recorded in this worktree and running on the Docker host",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			m, err := loadManifest(cmd.Context(), g.dir)
 			if err != nil {
 				return err
 			}
-			projects, err := dockerx.ListProjects(cmd.Context(), m.Project+"-")
+			rows, err := listEnvironments(cmd.Context(), m)
 			if err != nil {
 				return err
 			}
 			if g.jsonOut {
-				return json.NewEncoder(os.Stdout).Encode(projects)
+				return json.NewEncoder(os.Stdout).Encode(rows)
 			}
-			sort.Slice(projects, func(i, j int) bool { return projects[i].Name < projects[j].Name })
-			for _, p := range projects {
-				fmt.Printf("%-48s %s\n", p.Name, p.Status)
+			fmt.Printf("%-40s %-8s %-30s %-6s %s\n", "NAME", "BACKEND", "BRANCH", "KEPT", "DOCKER")
+			for _, r := range rows {
+				fmt.Printf("%-40s %-8s %-30s %-6v %s\n", r.Name, r.Backend, r.Branch, r.Kept, r.Docker)
 			}
 			return nil
 		},
 	}
+}
+
+// envRow is one line of `envctl list` / `envctl env list`.
+type envRow struct {
+	Name    string `json:"name"`
+	Project string `json:"project"`
+	Backend string `json:"backend"`
+	Branch  string `json:"branch,omitempty"`
+	Kept    bool   `json:"kept"`
+	Docker  string `json:"docker"` // compose status summary, or "-" if not on this host
+}
+
+func listEnvironments(ctx context.Context, m *manifest.Manifest) ([]envRow, error) {
+	byName := map[string]*envRow{}
+	recorded, err := envstate.List(m.Dir)
+	if err != nil {
+		return nil, err
+	}
+	for _, s := range recorded {
+		byName[s.Name] = &envRow{Name: s.Name, Project: feature.ProjectName(m.Project, s.Name), Backend: s.Backend, Branch: s.Branch, Kept: s.Kept, Docker: "-"}
+	}
+	if projects, err := dockerx.ListProjects(ctx, m.Project+"-"); err == nil {
+		for _, p := range projects {
+			name := strings.TrimPrefix(p.Name, m.Project+"-")
+			r, ok := byName[name]
+			if !ok {
+				r = &envRow{Name: name, Project: p.Name, Backend: "local", Docker: "-"}
+				byName[name] = r
+			}
+			r.Docker = p.Status
+		}
+	}
+	rows := make([]envRow, 0, len(byName))
+	for _, r := range byName {
+		rows = append(rows, *r)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+	return rows, nil
 }
 
 func initCmd(g *globals) *cobra.Command {
@@ -333,7 +384,11 @@ func printStatus(g *globals, st *provider.Status) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(st)
 	}
-	fmt.Printf("feature   %s\nproject   %s\nbackend   %s\nrendered  %s\n", st.Feature, st.Project, st.Backend, st.Rendered)
+	branch := st.Branch
+	if branch == "" {
+		branch = "(unlinked)"
+	}
+	fmt.Printf("env       %s\nbranch    %s\nproject   %s\nbackend   %s\nrendered  %s\n", st.Name, branch, st.Project, st.Backend, st.Rendered)
 	if len(st.Services) > 0 {
 		fmt.Println("services")
 		for _, s := range st.Services {

@@ -1,5 +1,7 @@
-// Package feature derives the environment identity (a feature slug) from the
-// git branch of the current worktree, and the compose project name from it.
+// Package feature derives the default environment name (a slug of the git
+// branch of the current worktree) and the compose project name from it. The
+// branch is an attribute of an environment, not its identity; see the
+// environment identity design note.
 package feature
 
 import (
@@ -41,8 +43,22 @@ func ProjectName(prefix, slug string) string {
 	return prefix + "-" + slug
 }
 
-// Detect returns the feature slug for the worktree containing dir: the branch
-// name when on a branch, otherwise the worktree directory name.
+// Branch returns the checked-out branch of the worktree containing dir, or ""
+// on a detached HEAD.
+func Branch(ctx context.Context, dir string) (string, error) {
+	out, err := git(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("not a git worktree: %w", err)
+	}
+	b := strings.TrimSpace(out)
+	if b == "HEAD" {
+		return "", nil
+	}
+	return b, nil
+}
+
+// Detect returns the default environment name for the worktree containing
+// dir: the branch slug when on a branch, otherwise the worktree directory name.
 func Detect(ctx context.Context, dir string) (string, error) {
 	out, err := git(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {

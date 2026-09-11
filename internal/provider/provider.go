@@ -15,12 +15,14 @@ const (
 
 // Spec is everything needed to converge an environment.
 type Spec struct {
-	Feature  string // slug, e.g. feat-imported-traffic-pricing
+	Env      string // environment name, e.g. feat-imported-traffic-pricing (defaults to the branch slug)
+	Branch   string // linked branch, e.g. feat/imported-traffic-pricing; empty when unlinked
+	Kept     bool   // created explicitly with `env create`; CI never destroys it
 	Project  string // compose project name, e.g. mg-feat-imported-traffic-pricing
 	Backend  Backend
 	ImageTag string // optional; local builds when empty
 	Dataset  string // reserved for milestone 2
-	Parent   string // parent feature slug in the graph, if any
+	Parent   string // parent environment name in the graph, if any
 	Build    bool   // pass --build to compose up
 	Wait     bool   // pass --wait to compose up
 }
@@ -43,13 +45,16 @@ type Service struct {
 
 // Status is the reconciled view of an environment.
 type Status struct {
-	Feature   string     `json:"feature"`
+	Name      string     `json:"name"`    // environment name
+	Feature   string     `json:"feature"` // deprecated alias of Name, kept for one release
+	Branch    string     `json:"branch,omitempty"`
+	Kept      bool       `json:"kept"`
 	Project   string     `json:"project"`
 	Backend   Backend    `json:"backend"`
 	Running   bool       `json:"running"`
 	Services  []Service  `json:"services"`
 	Endpoints []Endpoint `json:"endpoints"`
-	Env       []string   `json:"env"` // KEY=VALUE lines for host tooling
+	EnvLines  []string   `json:"env"` // KEY=VALUE lines for host tooling
 	Rendered  string     `json:"rendered"`
 }
 

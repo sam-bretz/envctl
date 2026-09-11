@@ -20,7 +20,8 @@ envctl up
 envctl derives a feature name from your branch, renders an isolated copy of the stack, starts it, and waits for health checks. The output ends with the services, their endpoints, and the env file for host tooling:
 
 ```text
-feature   fix-metergraph-capitalization
+env       fix-metergraph-capitalization
+branch    fix/metergraph-capitalization
 project   mg-fix-metergraph-capitalization
 backend   local
 rendered  .envctl/fix-metergraph-capitalization/compose.yaml

@@ -46,7 +46,7 @@ steps:
     with:
       version: latest
       token: ${{ secrets.ENVCTL_TOKEN }}
-  - run: envctl --feature ci render --json
+  - run: envctl --env ci render --json
 ```
 
 Ubuntu runners have Docker, so `envctl up` also works inside a job for integration tests that need the stack; the environment lives only as long as the job. Long-lived per-branch environments are the VM backend on the [Roadmap](/docs/roadmap/).

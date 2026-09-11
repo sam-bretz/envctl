@@ -3,13 +3,13 @@
 ## Global flags
 
 ```
-envctl [-C PATH] [--feature SLUG] [--backend local] [--port-mode domains|registry] [--json] <command>
+envctl [-C PATH] [--env NAME] [--backend local] [--port-mode domains|registry] [--json] <command>
 ```
 
 | Flag | Meaning |
 | --- | --- |
 | `-C PATH` | Operate on the worktree containing PATH. |
-| `--feature SLUG` | Override branch detection. Value is slugified. |
+| `--env NAME` | Name the environment instead of deriving it from the branch. Value is slugified. `--feature` is a deprecated alias. |
 | `--port-mode` | Override the manifest's `ports.mode` for this call. |
 | `--json` | One JSON document on stdout. Compose progress goes to stderr. |
 
@@ -25,6 +25,9 @@ envctl [-C PATH] [--feature SLUG] [--backend local] [--port-mode domains|registr
 | `render` | Write `.envctl/<feature>/compose.yaml` and `env` only. |
 | `logs [-f] [service...]` | Compose logs. |
 | `exec <service> -- <cmd...>` | Run inside a running container. |
+| `env create <name> [--branch B] [--no-up]` | Named, kept environment; CI never destroys it. |
+| `env link <name> <branch>` / `env unlink <name>` | Change which branch's pushes update it. |
+| `env list` / `env rm <name>` | Same as `list`; destroy including the record. |
 | `init --project P [--file F ...]` | Write a starter `envctl.yaml`. |
 | `hook claude` | Print Claude Code worktree hooks JSON. |
 | `agent install [--global]` | Install this skill into `.claude/skills/` and `.agents/skills/`. |
@@ -36,7 +39,9 @@ Exit code is 0 on success, 1 on failure with `envctl: <reason>` on stderr.
 
 ```json
 {
-  "feature": "feat-x",
+  "name": "feat-x",
+  "branch": "feat/x",
+  "kept": false,
   "project": "mg-feat-x",
   "backend": "local",
   "running": true,
@@ -51,9 +56,10 @@ Exit code is 0 on success, 1 on failure with `envctl: <reason>` on stderr.
 In domains mode (OrbStack) `endpoints[].host` is `service.project.orb.local`,
 `port` equals `target`, and no `ENVCTL_PORT_*` lines exist.
 
-## Feature and project names
+## Environment and project names
 
-Branch → slug: lowercase, non `[a-z0-9]` runs become `-`, trimmed, max 40
+The environment name defaults to the branch slug; the branch is a linked
+attribute recorded in `.envctl/<name>/env.json`. Branch → slug: lowercase, non `[a-z0-9]` runs become `-`, trimmed, max 40
 chars. `feat/Imported Pricing` → `feat-imported-pricing`. Detached HEAD uses
 the worktree directory name. Project name is `<prefix>-<slug>`, e.g.
 `mg-feat-imported-pricing`. Containers are `<project>-<service>-1`, volumes
@@ -105,7 +111,7 @@ runs `envctl up --no-wait`, prints the path) and `WorktreeRemove` (runs
 | Piece | Use |
 | --- | --- |
 | `uses: sam-bretz/envctl@main` (composite action) | Installs the binary; inputs `version` (default `latest`) and `token`. |
-| `uses: sam-bretz/envctl/.github/workflows/validate.yml@main` | Renders `--feature ci` on pull requests and checks it with `docker compose config`. Inputs `version`, `working-directory`, `port-mode`; secret `token`. |
+| `uses: sam-bretz/envctl/.github/workflows/validate.yml@main` | Renders `--env ci` on pull requests and checks it with `docker compose config`. Inputs `version`, `working-directory`, `port-mode`; secret `token`. |
 | `release.yml` in the envctl repo | Builds binaries on `v*` tags; archives include the hook scripts and this skill. |
 
 While the envctl repository is private, consumers need a token with read

@@ -49,7 +49,7 @@ func setup(t *testing.T) *manifest.Manifest {
 func TestRenderDomainsStripsHostPorts(t *testing.T) {
 	m := setup(t)
 	res, err := Render(context.Background(), Options{
-		Manifest: m, Feature: "feat-a", Project: "mg-feat-a", Backend: "local",
+		Manifest: m, Env: "feat-a", Branch: "feat/a", Project: "mg-feat-a", Backend: "local",
 		Mode: ModeDomains, OutDir: filepath.Join(m.Dir, ".envctl", "feat-a"),
 	})
 	if err != nil {
@@ -68,8 +68,11 @@ func TestRenderDomainsStripsHostPorts(t *testing.T) {
 	if !strings.Contains(out, "container_name: mg-feat-a-pg") {
 		t.Errorf("container_name not namespaced:\n%s", out)
 	}
-	if !strings.Contains(out, LabelFeature+": feat-a") {
-		t.Errorf("feature label missing:\n%s", out)
+	if !strings.Contains(out, LabelEnv+": feat-a") || !strings.Contains(out, LabelFeature+": feat-a") {
+		t.Errorf("env labels missing:\n%s", out)
+	}
+	if !strings.Contains(strings.Join(res.Env, "\n"), "ENVCTL_BRANCH=feat/a") {
+		t.Errorf("env missing branch line")
 	}
 	if len(res.Published) != 0 {
 		t.Errorf("domains mode published ports: %+v", res.Published)
@@ -87,7 +90,7 @@ func TestRenderRegistryAllocatesStablePorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	opts := Options{
-		Manifest: m, Feature: "feat-b", Project: "mg-feat-b", Backend: "local",
+		Manifest: m, Env: "feat-b", Project: "mg-feat-b", Backend: "local",
 		Mode: ModeRegistry, Registry: reg, OutDir: filepath.Join(m.Dir, ".envctl", "feat-b"),
 	}
 	res, err := Render(context.Background(), opts)

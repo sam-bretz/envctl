@@ -8,10 +8,10 @@ envctl runs against the Docker host in front of you. It derives the environment 
 ## Global flags
 
 ```bash
-envctl [-C PATH] [--feature SLUG] [--backend local] [--port-mode domains|registry] [--json] <command>
+envctl [-C PATH] [--env NAME] [--backend local] [--port-mode domains|registry] [--json] <command>
 ```
 
-`-C PATH` operates on the worktree containing `PATH` instead of the current directory. `--feature SLUG` replaces branch detection; the value is slugified. `--backend` accepts `local` today. `--port-mode` overrides `ports.mode` from the manifest for this invocation. `--json` switches output to JSON on every command that reports something.
+`-C PATH` operates on the worktree containing `PATH` instead of the current directory. `--env NAME` names the environment instead of deriving it from the branch; the value is slugified. `--feature` is a deprecated alias. `--backend` accepts `local` today. `--port-mode` overrides `ports.mode` from the manifest for this invocation. `--json` switches output to JSON on every command that reports something.
 
 ## Environment lifecycle
 
@@ -34,6 +34,22 @@ Start a rebuilt environment and print JSON for a script:
 envctl up --build --json | jq '.endpoints'
 ```
 
+## Named environments
+
+```bash
+envctl env create <name> [--branch BRANCH] [--no-up]
+envctl env link <name> <branch>
+envctl env unlink <name>
+envctl env list
+envctl env rm <name>
+```
+
+An environment named after the branch is created implicitly by `up` and linked to that branch. `env create` makes a named environment that is *kept*: CI never destroys it on merge, only `env rm` does. `--branch` links it so pushes to that branch update it; without `--branch` it is unlinked. `--no-up` records and renders without starting containers.
+
+`env link` re-points an environment at another branch. `env unlink` keeps the environment but stops it following any branch. `env list` is the same as `list`. `env rm` is `down --volumes` plus removal of the record.
+
+Locally the code always comes from the worktree you run in; the linked branch decides which pushes update the environment in CI. See the [environment identity](/docs/design/env-identity/) design note.
+
 ## Inspection
 
 ```bash
@@ -44,7 +60,7 @@ envctl render
 
 `status` reads the rendered files and asks compose which containers exist. It prints the feature, project, backend, each service with its state and health, endpoints, and the env file path. In JSON the `env` array holds the env file lines. `status` requires a prior `up` or `render`.
 
-`list` prints every compose project on the host whose name starts with this manifest's prefix, with compose's status summary. It does not need a rendered environment. JSON output is Docker's `compose ls` rows.
+`list` merges the environments recorded in this worktree (`.envctl/*/env.json`) with the compose projects on the host whose name starts with this manifest's prefix. Each row has the name, backend, linked branch, whether it is kept, and compose's status summary or `-` when it is not running here.
 
 `render` writes `.envctl/<feature>/compose.yaml` and `env` without starting anything, and prints the same status shape without container state. Use it to inspect what a port mode did:
 

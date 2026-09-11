@@ -37,7 +37,7 @@ envctl gives each git worktree its own isolated docker-compose environment. It r
 | `envctl down [-v]` | Remove containers; `-v` also removes volumes and port allocations. |
 | `envctl render` | Write the isolated compose file only. |
 
-Global flags: `-C PATH` (operate on another worktree), `--feature SLUG` (override branch detection), `--port-mode domains|registry`, `--json`.
+Global flags: `-C PATH` (operate on another worktree), `--env NAME` (override branch detection), `--port-mode domains|registry`, `--json`.
 
 ## How services are reached
 

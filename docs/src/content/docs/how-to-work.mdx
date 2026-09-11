@@ -64,11 +64,11 @@ Named datasets with faster resets are milestone 2; see [Roadmap](/docs/roadmap/)
 ## Use a throwaway environment
 
 ```bash
-envctl --feature scratch up
-envctl --feature scratch down -v
+envctl --env scratch up
+envctl --env scratch down -v
 ```
 
-The `--feature` flag overrides branch detection, so one branch can have several environments.
+The `--env` flag overrides branch detection, so one branch can have several environments.
 
 ## See what compose sees
 

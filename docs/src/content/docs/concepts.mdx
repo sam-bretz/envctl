@@ -5,17 +5,19 @@ description: Understand features, environments, port modes, the rendered project
 
 envctl is a thin layer over docker-compose. It does not replace compose, run a daemon, or keep a database. It rewrites a compose project so that many copies of it can run side by side.
 
-## Feature
-
-A feature is the unit of isolation. Its name is a slug derived from the git branch of the current worktree: `feat/imported-traffic-pricing` becomes `feat-imported-traffic-pricing`. On a detached HEAD the worktree directory name is used instead.
-
-Override the name with `--feature` when you need an environment that is not tied to a branch, for example a throwaway `--feature scratch`.
-
 ## Environment
 
-An environment is one feature's running stack on one backend. Today the only backend is `local`, the Docker host in front of you. A per-branch VM backend arrives later; see [Roadmap](/docs/roadmap/).
+An environment is the unit of isolation: one running copy of the stack on one backend, with a name. Today the only backend is `local`, the Docker host in front of you. A VM backend arrives later; see [Roadmap](/docs/roadmap/).
 
-An environment's compose project name is `<prefix>-<feature>`, for example `mg-feat-imported-traffic-pricing`. That name prefixes every container, network, and volume, which is what keeps environments apart.
+By default the name is a slug of the git branch of the current worktree: `feat/imported-traffic-pricing` becomes `feat-imported-traffic-pricing`. On a detached HEAD the worktree directory name is used. Name one explicitly with `--env`, for example a throwaway `--env scratch`, or with `envctl env create`.
+
+The compose project name is `<prefix>-<name>`, for example `mg-feat-imported-traffic-pricing`. That name prefixes every container, network, and volume, which is what keeps environments apart.
+
+## Linked branch
+
+The branch is an attribute of an environment, not its identity. A default-named environment is linked to its branch when first created. `envctl env link` points an environment at another branch, `env unlink` detaches it. Locally the code always comes from the worktree you run in; the link decides which pushes update the environment in CI. Environments created with `env create` are *kept*: CI never destroys them on merge.
+
+Each environment's record lives at `.envctl/<name>/env.json` in the worktree: name, backend, linked branch, dataset, parent, kept, timestamps.
 
 ## Manifest
 
@@ -30,7 +32,7 @@ An environment's compose project name is `<prefix>-<feature>`, for example `mg-f
 | Project name | Namespaces containers, networks, and volumes. |
 | Host ports | Stripped in domains mode; replaced with registry ports on `127.0.0.1` in registry mode. |
 | `container_name` | Prefixed with the project when a service pins one. |
-| Labels | `dev.envctl.feature`, `dev.envctl.backend`, and `dev.envctl.project` on every service. |
+| Labels | `dev.envctl.env`, `dev.envctl.backend`, and `dev.envctl.project` on every service (`dev.envctl.feature` is still written as an alias). |
 
 The result is written to `.envctl/<feature>/compose.yaml` and run with plain `docker compose`. Your source files are never modified, and anything compose can do still works on the rendered file.
 
@@ -47,10 +49,11 @@ Two environments cannot both publish container port 5432 on host port 5433. envc
 
 ## Env file
 
-Each render writes `.envctl/<feature>/env` with `KEY=VALUE` lines:
+Each render writes `.envctl/<name>/env` with `KEY=VALUE` lines:
 
 ```text
-ENVCTL_FEATURE=feat-x
+ENVCTL_ENV=feat-x
+ENVCTL_BRANCH=feat/x
 ENVCTL_PROJECT=mg-feat-x
 ENVCTL_BACKEND=local
 ENVCTL_PORT_MODE=registry

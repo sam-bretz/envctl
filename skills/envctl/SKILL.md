@@ -49,8 +49,9 @@ The same lines are in `.envctl/<feature>/env`; Makefiles can `-include` it.
 2. Before connecting to any service, read `envctl status --json`.
 3. Operating on another worktree: `envctl -C <path> <command>`. The feature
    name follows that worktree's branch.
-4. A throwaway environment on the same branch: `envctl --feature scratch up`,
-   then `envctl --feature scratch down -v`.
+4. A throwaway environment on the same branch: `envctl --env scratch up`,
+   then `envctl --env scratch down -v`. A durable one: `envctl env create
+   <name> [--branch B]`; it is kept until `envctl env rm <name>`.
 5. Leave nothing behind: `envctl down -v` when a worktree's work is done,
    unless the WorktreeRemove hook is installed (it does this automatically).
 6. Rendered files under `.envctl/` are generated; do not edit or commit them.

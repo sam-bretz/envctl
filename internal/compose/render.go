@@ -22,7 +22,8 @@ import (
 // Labels applied to every service so `envctl list` can find environments
 // without any local state.
 const (
-	LabelFeature = "dev.envctl.feature"
+	LabelEnv     = "dev.envctl.env"
+	LabelFeature = "dev.envctl.feature" // deprecated alias of LabelEnv, written for one release
 	LabelBackend = "dev.envctl.backend"
 	LabelProject = "dev.envctl.project"
 )
@@ -38,7 +39,8 @@ const (
 // Options drive one render.
 type Options struct {
 	Manifest *manifest.Manifest
-	Feature  string
+	Env      string
+	Branch   string
 	Project  string
 	Backend  string
 	Mode     Mode
@@ -85,7 +87,8 @@ func Render(ctx context.Context, o Options) (*Result, error) {
 		if svc.Labels == nil {
 			svc.Labels = types.Labels{}
 		}
-		svc.Labels[LabelFeature] = o.Feature
+		svc.Labels[LabelEnv] = o.Env
+		svc.Labels[LabelFeature] = o.Env
 		svc.Labels[LabelBackend] = o.Backend
 		svc.Labels[LabelProject] = o.Project
 		if svc.ContainerName != "" {
@@ -190,7 +193,9 @@ func rewritePorts(o Options, service string, in []types.ServicePortConfig, res *
 // test runners, agents) can source to reach the environment.
 func envLines(o Options, res *Result) []string {
 	lines := []string{
-		"ENVCTL_FEATURE=" + o.Feature,
+		"ENVCTL_ENV=" + o.Env,
+		"ENVCTL_FEATURE=" + o.Env, // deprecated alias
+		"ENVCTL_BRANCH=" + o.Branch,
 		"ENVCTL_PROJECT=" + o.Project,
 		"ENVCTL_BACKEND=" + o.Backend,
 		"ENVCTL_PORT_MODE=" + string(o.Mode),
@@ -206,7 +211,7 @@ func envLines(o Options, res *Result) []string {
 	for _, p := range res.Published {
 		lines = append(lines, fmt.Sprintf("ENVCTL_PORT_%s_%d=%d", envKey(p.Service), p.Target, p.Host))
 	}
-	sort.Strings(lines[4:])
+	sort.Strings(lines[6:])
 	return lines
 }
 

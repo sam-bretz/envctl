@@ -109,7 +109,7 @@ func (e *Engine) ReconcileChild(ctx context.Context, id, revision, node string) 
 			if c == nil || c.Runtime.ID != child.Runtime.ID {
 				return workflow.ErrConflict
 			}
-			c.Runtime.Ready, c.Runtime.State, c.Recovery = false, "released", nil
+			c.Runtime.Ready, c.Runtime.State, c.Runtime.PreviewURL, c.Recovery = false, "released", "", nil
 			return nil
 		})
 		return err
@@ -181,6 +181,7 @@ func (e *Engine) ReconcileChild(ctx context.Context, id, revision, node string) 
 			if c == nil || c.Runtime.ID != child.Runtime.ID {
 				return workflow.ErrConflict
 			}
+			state.PreviewURL = c.Runtime.PreviewURL // owned by preview reconciliation
 			c.Runtime, c.Readiness, c.ReadinessCheckedAt, c.Recovery = state, workflow.Clone(probes), e.now(), nil
 			return nil
 		})

@@ -29,6 +29,7 @@ type Config struct {
 	Stack        manifest.Stack    `yaml:"stack" json:"stack"`
 	Ports        manifest.Ports    `yaml:"ports" json:"ports"`
 	Expose       []manifest.Expose `yaml:"expose" json:"expose"`
+	Preview      *Preview          `yaml:"preview,omitempty" json:"preview,omitempty"`
 	Plugins      []PluginRef       `yaml:"plugins" json:"plugins"`
 	Data         DataConfig        `yaml:"data,omitempty" json:"data,omitzero"`
 	Agents       AgentConfig       `yaml:"agents" json:"agents"`
@@ -345,6 +346,9 @@ func (c Config) Validate() error {
 	}
 	if !validStall(c.Limits.StallSeconds) {
 		errs = append(errs, fmt.Errorf("limits.stall_seconds must be between %d and %d", MinStallSeconds, MaxNodeAttemptSeconds))
+	}
+	if err := c.Preview.validate(c.Workflow); err != nil {
+		errs = append(errs, err)
 	}
 	if c.Limits.Parallel > 1 && c.Limits.VMs < 2 {
 		errs = append(errs, errors.New("parallel execution requires capacity for the revision VM and at least one child VM"))

@@ -32,6 +32,7 @@ var ErrMissing = errors.New("runtime does not exist")
 type Lima struct {
 	Dir    string
 	Binary string
+	SSH    string // ssh client for explicit preview tunnels; default "ssh"
 	Log    io.Writer
 }
 

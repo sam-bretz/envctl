@@ -38,6 +38,7 @@ type Backend struct {
 	Capabilities Capabilities
 	memo         activityMemo
 	clock        func() time.Time // stall timing; tests substitute a fixed clock
+	previews     previewState
 }
 
 var _ engine.Backend = (*Backend)(nil)
@@ -441,6 +442,7 @@ func (b *Backend) Release(ctx context.Context, a engine.Assignment) error {
 	if err := b.cleanupPlugins(ctx, a); err != nil {
 		return err
 	}
+	b.previewManager().Close(a.Revision.Runtime.ID)
 	if err := b.Provider.Destroy(ctx, a.Revision.Runtime.ID); err != nil && !errors.Is(err, vm.ErrMissing) {
 		return errors.New("owned local VM release failed")
 	}
@@ -518,5 +520,6 @@ func (b *Backend) RuntimeStatus(ctx context.Context, a engine.Assignment) (workf
 		}
 		state.Services = append(state.Services, workflow.Service{Name: entry.Service, State: status})
 	}
+	state.Services = withServiceURLs(state.Services, entries)
 	return state, nil
 }

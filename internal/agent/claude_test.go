@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/sam-bretz/envctl/internal/guestjob"
 )
 
 func TestClaudeCredentialRejectsRefreshableLoginSessions(t *testing.T) {
@@ -59,5 +61,27 @@ func TestClaudeRequestKeepsCredentialsInScopedEnvironment(t *testing.T) {
 	}
 	if at := slices.Index(req.Args, "--resume"); at < 0 || req.Args[at+1] != i.Session {
 		t.Fatal("ambiguous session resume")
+	}
+}
+
+func TestInvocationEnvironmentIsScopedToEnvctlValues(t *testing.T) {
+	i := Invocation{ID: "attempt_one", Role: "worker", Directory: "/work/envctl/repos/app", Prompt: "Implement", Schema: simpleSchema(), TimeoutSeconds: 300, Env: map[string]string{"ENVCTL_SERVICE_WEB_URL": "http://127.0.0.1:18089"}}
+	credential := Credential{OAuthToken: "private-token", Secrets: []string{"private-token"}}
+	for _, h := range []interface {
+		Request(Invocation, Credential) (guestjob.Request, error)
+	}{Claude{}, Codex{}} {
+		req, err := h.Request(i, credential)
+		if err != nil || req.Env["ENVCTL_SERVICE_WEB_URL"] != "http://127.0.0.1:18089" {
+			t.Fatal("service endpoint not passed to the harness", err, req.Env)
+		}
+		if req.Env["PYTHONDONTWRITEBYTECODE"] != "1" {
+			t.Fatal("harness environment replaced")
+		}
+	}
+	for _, bad := range []map[string]string{{"CLAUDE_CONFIG_DIR": "/tmp/x"}, {"CODEX_HOME": "/tmp/x"}, {"ENVCTL_X": "a\nb"}, {"envctl_lower": "x"}, {"ENVCTL_BIG": strings.Repeat("x", 1025)}} {
+		i.Env = bad
+		if _, err := (Claude{}).Request(i, credential); err == nil {
+			t.Fatal("unscoped harness environment accepted", bad)
+		}
 	}
 }

@@ -106,3 +106,26 @@ Version 2 workflow configurations set revision-wide limits under `limits`. A wor
 `envctl run show` prints each node's used and allowed attempts, its timeout and its stall window. `envctl run readiness` includes the same values under `limits`.
 
 When an agent is silent for its stall window, the coordinator first resumes the same session with a nudge asking for a status report. A nudged agent that stays silent without any activity, or a third stall in one attempt, fails the attempt with the stall evidence, and the normal retry budget applies. A command or tool call still running extends the window once, to twice its length. A step that legitimately runs quietly for longer than that, such as a long test suite or build, needs a larger `stall_seconds` on that node. A stall window at or above `attempt_seconds` leaves only the attempt timeout in effect.
+
+## Workflow preview (version 2, experimental)
+
+Services in a workflow VM publish only on the guest's loopback interface, and Lima's automatic port forwarding stays disabled. To open one service from your machine, opt in with `preview`:
+
+```yaml
+preview:
+  service: web      # Compose service name
+  port: 8080        # container port; it must be published (for example `ports: ['8080']`)
+  path: /           # optional request path, default /
+  node: code        # optional; see below
+```
+
+| Key | Type | Notes |
+| --- | --- | --- |
+| `preview.service` | string | Required. The Compose service to preview. |
+| `preview.port` | int | Required, 1 to 65535. The container port; envctl finds its guest-loopback binding. |
+| `preview.path` | string | Optional absolute path used for the URL and the reachability check. |
+| `preview.node` | string | Optional. In a parallel workflow, a branch node previews that branch's child VM. Otherwise the revision VM is previewed. |
+
+The coordinator binds one port on `127.0.0.1` (never another interface) and forwards each connection over `ssh -W` through the VM's Lima SSH configuration to exactly that guest port. It advertises the URL in `envctl run show`, the Bubble Tea header and Services panel, and the run's `runtime.preview_url` only while an HTTP request through it succeeds. The forward belongs to the coordinator process: it is re-established on the same port after a restart, including for completed runs kept for inspection, and removed when the VM is released, cancelled or superseded by a rewind. Anyone who can connect to your machine's loopback can open the preview.
+
+Workers, supervisors and checks receive the running services' guest-loopback endpoints as `ENVCTL_SERVICE_<NAME>_HOST`, `ENVCTL_SERVICE_<NAME>_URL` (lowest published port) and `ENVCTL_SERVICE_<NAME>_PORT_<CONTAINER_PORT>`. These addresses work inside the VM only. A worker's values are fixed when its attempt starts; checks read them when they are submitted. Services with fixed published ports keep stable values across restarts.

@@ -384,6 +384,14 @@ Start the shell against recorded events, then connect the real API. Full termina
 
 The Conversation panel now shows a running attempt's live phase, resume generation, current check and recent activity parsed from the harness's own event stream (Codex `exec --json`, Claude `stream-json`), plus each message's delivery status. Live steering is interrupt-and-resume: harnesses accept no input mid-run, so the coordinator records a new invocation generation, stops the running guest job, and resumes the same explicit session in the same worktree with the new messages. The frozen worker assignment reviewed by the supervisor does not change. Supervisors see every message for their stage. Messages arriving during review interrupt and resume the supervisor. Each role is bounded to 8 live resumes per attempt. See the [CLI reference](/docs/cli-reference/#experimental-live-progress-and-steering).
 
+**No-progress recovery.** The coordinator watches each running worker and supervisor job for harness output. Any output counts, including events the activity summary omits, such as reasoning. The last-output time is kept in the attempt receipt, so restarting the coordinator neither resets nor trips the window. After `stall_seconds` (default 600) of silence it acts in steps:
+
+1. If a command or tool call is still in flight, extend the window once, to twice its length.
+2. Otherwise resume the same session with a coordinator nudge asking for a status report. This uses the same interrupt-and-resume path as user steering, but it is recorded as a nudge, not a user message.
+3. If a nudged generation then stays silent with no activity at all, the attempt fails. It also fails on a stall after two nudges, when the harness never reported a session, or when the live resume limit is reached.
+
+A failing decision stops the stalled job before the attempt fails, and it keeps its evidence: silence duration, window, and last activity. The engine's retry budget then applies, and a worker's next attempt restores its unfinished source. An agent that completes while being stopped keeps its result. Pending user steering takes precedence over a nudge and starts a new window. Progress shows the quiet period once half the window has passed, plus nudges sent and any stopping decision. The main false-positive risk is a legitimately silent step, so the window is configurable per node.
+
 ## Compatibility and scope
 
 Version 1 manifests and lifecycle commands continue to work. Workflow configuration is versioned explicitly; unknown critical fields cannot silently disappear. Bare `envctl` launches Bubble Tea only in an interactive terminal. Retain legacy environment metadata and link it to run IDs where applicable; it cannot represent full workflow history.

@@ -75,6 +75,10 @@ type Limits struct {
 	VMs            int `yaml:"vms" json:"vms"`
 	MaxAttempts    int `yaml:"max_attempts" json:"max_attempts"`
 	AttemptSeconds int `yaml:"attempt_seconds" json:"attempt_seconds"`
+	// StallSeconds is how long a running agent may produce no harness output
+	// before the coordinator intervenes. Zero means DefaultStallSeconds and is
+	// omitted, so existing configuration identities are unchanged.
+	StallSeconds int `yaml:"stall_seconds,omitempty" json:"stall_seconds,omitempty"`
 }
 type AgentConfig struct {
 	Worker     Harness `yaml:"worker" json:"worker"`
@@ -121,6 +125,7 @@ type Node struct {
 type NodeLimits struct {
 	MaxAttempts    int `yaml:"max_attempts,omitempty" json:"max_attempts,omitempty"`
 	AttemptSeconds int `yaml:"attempt_seconds,omitempty" json:"attempt_seconds,omitempty"`
+	StallSeconds   int `yaml:"stall_seconds,omitempty" json:"stall_seconds,omitempty"`
 }
 
 // Upper bounds for node overrides; guest jobs refuse timeouts above one day.
@@ -128,6 +133,24 @@ const (
 	MaxNodeAttempts       = 100
 	MaxNodeAttemptSeconds = 86400
 )
+
+// Stall windows shorter than a minute would interrupt ordinary model latency.
+const (
+	DefaultStallSeconds = 600
+	MinStallSeconds     = 60
+)
+
+func validStall(seconds int) bool {
+	return seconds == 0 || (seconds >= MinStallSeconds && seconds <= MaxNodeAttemptSeconds)
+}
+
+// StallSeconds returns the effective no-output window for one node's agents.
+func (c Config) StallSeconds(node string) int {
+	if s := c.NodeLimits(node).StallSeconds; s > 0 {
+		return s
+	}
+	return DefaultStallSeconds
+}
 
 // NodeLimits returns the effective limits for one node's assignments.
 func (c Config) NodeLimits(node string) Limits {
@@ -138,6 +161,9 @@ func (c Config) NodeLimits(node string) Limits {
 	}
 	if n.Limits.AttemptSeconds > 0 {
 		l.AttemptSeconds = n.Limits.AttemptSeconds
+	}
+	if n.Limits.StallSeconds > 0 {
+		l.StallSeconds = n.Limits.StallSeconds
 	}
 	return l
 }
@@ -317,6 +343,9 @@ func (c Config) Validate() error {
 	if c.Limits.Parallel < 1 || c.Limits.VMs < 1 || c.Limits.MaxAttempts < 1 || c.Limits.AttemptSeconds < 1 {
 		errs = append(errs, errors.New("limits must be positive"))
 	}
+	if !validStall(c.Limits.StallSeconds) {
+		errs = append(errs, fmt.Errorf("limits.stall_seconds must be between %d and %d", MinStallSeconds, MaxNodeAttemptSeconds))
+	}
 	if c.Limits.Parallel > 1 && c.Limits.VMs < 2 {
 		errs = append(errs, errors.New("parallel execution requires capacity for the revision VM and at least one child VM"))
 	}
@@ -394,6 +423,9 @@ func (d Definition) Validate() error {
 		}
 		if n.Limits.MaxAttempts < 0 || n.Limits.MaxAttempts > MaxNodeAttempts || n.Limits.AttemptSeconds < 0 || n.Limits.AttemptSeconds > MaxNodeAttemptSeconds {
 			return fmt.Errorf("node %s: limits must be positive, with at most %d attempts and %d attempt seconds", id, MaxNodeAttempts, MaxNodeAttemptSeconds)
+		}
+		if !validStall(n.Limits.StallSeconds) {
+			return fmt.Errorf("node %s: stall_seconds must be between %d and %d", id, MinStallSeconds, MaxNodeAttemptSeconds)
 		}
 		unique := map[string]bool{}
 		for _, o := range n.Outputs {

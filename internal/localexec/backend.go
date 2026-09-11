@@ -37,6 +37,7 @@ type Backend struct {
 	Provider     vm.Provider
 	Capabilities Capabilities
 	memo         activityMemo
+	clock        func() time.Time // stall timing; tests substitute a fixed clock
 }
 
 var _ engine.Backend = (*Backend)(nil)

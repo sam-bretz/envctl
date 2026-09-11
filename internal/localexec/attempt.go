@@ -42,6 +42,8 @@ type attemptRecord struct {
 	Steering          []workflow.Delivery  `json:"steering,omitempty"`
 	Live              map[string]*liveRole `json:"live,omitempty"`
 	SupervisorSession string               `json:"supervisor_session,omitempty"`
+	// Stall is the durable no-output watch per agent role.
+	Stall map[string]*stallState `json:"stall,omitempty"`
 }
 
 // Recovery source preserves interrupted work without creating a proposal,
@@ -356,6 +358,7 @@ func (b *Backend) pollJob(ctx context.Context, a engine.Assignment, r *attemptRe
 	if status.Output != "" {
 		r.Cursors[id] = status.Cursor
 		r.Logs[id] += status.Output
+		r.noteOutput(id, b.now())
 		if len(r.Logs[id]) > 16<<20 {
 			return status, errors.New("guest job evidence exceeds the journal bound")
 		}
@@ -501,6 +504,10 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 		if status.State == "missing" {
 			return status, false, nil
 		}
+		// A stall decision is final for this attempt: stop the job, then fail.
+		if r.stallFailure(role) != "" {
+			return b.stopStalled(ctx, a, r, role, status)
+		}
 		// A completed job whose steering is undelivered is superseded too:
 		// its proposal cannot be accepted without the user's message.
 		if pending(status.State) || status.State == "completed" {
@@ -509,7 +516,16 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 				return status, false, err
 			}
 		}
-		return status, !pending(status.State), nil
+		if pending(status.State) {
+			if _, err = b.watchStall(a, r, role, r.Logs[current.ID]); err != nil {
+				return status, false, err
+			}
+			if r.stallFailure(role) != "" {
+				return b.stopStalled(ctx, a, r, role, status)
+			}
+			return status, false, nil
+		}
+		return status, true, nil
 	}
 	node := a.Revision.Config.Workflow.Nodes[a.Attempt.Node]
 	switch r.Phase {
@@ -522,6 +538,9 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 			return running()
 		}
 		if status.State != "completed" {
+			if stalled := r.stallFailure("worker"); stalled != "" {
+				return b.workerFailed(ctx, a, r, stalled)
+			}
 			return b.workerFailed(ctx, a, r, "worker job ended in "+status.State+"; its journal is retained")
 		}
 		worker := r.invocation("worker")
@@ -709,6 +728,9 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 			return running()
 		}
 		if status.State != "completed" {
+			if stalled := r.stallFailure("supervisor"); stalled != "" {
+				return b.failed(a, r, stalled)
+			}
 			return b.failed(a, r, "supervisor job ended in "+status.State)
 		}
 		raw, err := b.agentResult(ctx, a, "supervisor", r.invocation("supervisor").ID)

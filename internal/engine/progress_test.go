@@ -47,18 +47,19 @@ func TestProgressIsThrottledAndDeliveriesAreDurable(t *testing.T) {
 	if p := progress(); p == nil || p.Phase != "worker" || p.UpdatedAt.IsZero() {
 		t.Fatal("first progress not persisted", p)
 	}
-	base := events()
+	base, version := events(), h.run().Version
 	// Activity-only changes within the interval are observed but not written.
 	for _, line := range []string{"ran (exit 0): ls", "ran (exit 1): pytest", "agent: fixing"} {
 		observe(Observation{Progress: &workflow.Progress{Phase: "worker", Activity: []string{"agent: reading", line}}})
 	}
-	if events() != base || len(progress().Activity) != 1 {
+	if len(progress().Activity) != 1 {
 		t.Fatal("activity-only progress was not throttled")
 	}
-	// A phase change is written at once.
+	// A phase change is written at once, outside the versioned run document:
+	// progress never makes a client's version-fenced command stale.
 	observe(Observation{Progress: &workflow.Progress{Phase: "checks", Detail: "check 1 of 1: unit"}})
-	if p := progress(); p.Phase != "checks" || events() != base+1 {
-		t.Fatal("phase change was throttled", p)
+	if p := progress(); p.Phase != "checks" || events() != base || h.run().Version != version {
+		t.Fatal("phase change was throttled or changed the run version", p)
 	}
 	// Deliveries are durable immediately, once, even with unchanged progress.
 	delivery := workflow.Delivery{Message: "msg_one", Role: "worker", Generation: 1, At: h.now}
@@ -71,7 +72,7 @@ func TestProgressIsThrottledAndDeliveriesAreDurable(t *testing.T) {
 			steering = a.Steering
 		}
 	}
-	if len(steering) != 1 || steering[0].Message != "msg_one" || events() != base+2 {
+	if len(steering) != 1 || steering[0].Message != "msg_one" || events() != base+1 {
 		t.Fatal("delivery not recorded exactly once", steering, events()-base)
 	}
 	// After the interval, new activity is written again.

@@ -3,3 +3,4 @@
 .envctl/
 *.test
 coverage.out
+/.claude/worktrees/

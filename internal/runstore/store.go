@@ -77,7 +77,8 @@ func Open(dir string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY,version INTEGER NOT NULL,priority INTEGER NOT NULL,created TEXT NOT NULL,body BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS operations (id TEXT PRIMARY KEY,request_digest TEXT NOT NULL,response BLOB NOT NULL);
  CREATE TABLE IF NOT EXISTS events (sequence INTEGER PRIMARY KEY AUTOINCREMENT,run_id TEXT NOT NULL REFERENCES runs(id),revision TEXT NOT NULL,version INTEGER NOT NULL,type TEXT NOT NULL,at TEXT NOT NULL);
- CREATE INDEX IF NOT EXISTS events_run ON events(run_id,sequence);`)
+ CREATE INDEX IF NOT EXISTS events_run ON events(run_id,sequence);
+ CREATE TABLE IF NOT EXISTS progress (run_id TEXT NOT NULL REFERENCES runs(id),attempt TEXT NOT NULL,body BLOB NOT NULL,PRIMARY KEY(run_id,attempt));`)
 	if err != nil {
 		db.Close()
 		return nil, err
@@ -105,7 +106,11 @@ func (s *Store) Get(ctx context.Context, id string) (*workflow.Run, error) {
 	if err != nil {
 		return nil, err
 	}
-	return decode(b)
+	r, err := decode(b)
+	if err != nil {
+		return nil, err
+	}
+	return r, s.overlay(ctx, r)
 }
 func (s *Store) List(ctx context.Context) ([]workflow.Run, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT body FROM runs ORDER BY priority DESC,created DESC,id")
@@ -125,7 +130,70 @@ func (s *Store) List(ctx context.Context) ([]workflow.Run, error) {
 		}
 		out = append(out, *r)
 	}
-	return out, rows.Err()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	for i := range out {
+		if err = s.overlay(ctx, &out[i]); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// SetProgress records display-only progress for a running attempt. It does
+// not change the run version, so live activity never makes a client's
+// version-fenced command stale.
+func (s *Store) SetProgress(ctx context.Context, runID, attempt string, p workflow.Progress) error {
+	b, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, "INSERT INTO progress(run_id,attempt,body) VALUES(?,?,?) ON CONFLICT(run_id,attempt) DO UPDATE SET body=excluded.body", runID, attempt, b)
+	return err
+}
+
+// overlay attaches stored progress to the run's running attempts.
+func (s *Store) overlay(ctx context.Context, r *workflow.Run) error {
+	rows, err := s.db.QueryContext(ctx, "SELECT attempt,body FROM progress WHERE run_id=?", r.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	progress := map[string]*workflow.Progress{}
+	for rows.Next() {
+		var id string
+		var b []byte
+		if err = rows.Scan(&id, &b); err != nil {
+			return err
+		}
+		var p workflow.Progress
+		if json.Unmarshal(b, &p) == nil {
+			progress[id] = &p
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return err
+	}
+	for i := range r.Revisions {
+		for j := range r.Revisions[i].Attempts {
+			a := &r.Revisions[i].Attempts[j]
+			if a.State == "running" && progress[a.ID] != nil {
+				a.Progress = progress[a.ID]
+			}
+		}
+	}
+	return nil
+}
+
+// stripProgress keeps overlaid display state out of the versioned document.
+func stripProgress(r *workflow.Run) {
+	for i := range r.Revisions {
+		for j := range r.Revisions[i].Attempts {
+			r.Revisions[i].Attempts[j].Progress = nil
+		}
+	}
 }
 func receipt(ctx context.Context, tx *sql.Tx, op, hash string) (*workflow.Run, error) {
 	var h string
@@ -197,6 +265,7 @@ func (s *Store) Create(ctx context.Context, op string, request any, r *workflow.
 	if prior, e := receipt(ctx, tx, op, hash); e != nil || prior != nil {
 		return prior, e
 	}
+	stripProgress(r)
 	b, err := json.Marshal(r)
 	if err != nil {
 		return nil, err
@@ -320,6 +389,7 @@ func (s *Store) mutate(ctx context.Context, id string, expected int64, op, kind 
 	}
 	r.Version++
 	r.UpdatedAt = time.Now().UTC()
+	stripProgress(r)
 	b, err = json.Marshal(r)
 	if err != nil {
 		return nil, err

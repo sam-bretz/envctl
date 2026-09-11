@@ -18,8 +18,8 @@ func (e *Engine) progressInterval() time.Duration {
 
 // observe records live display state before the observation's state is acted
 // on. Deliveries are durable immediately so the UI can show that steering
-// reached the agent; activity-only progress is throttled so the event log
-// grows with phases and deliveries, not with every harness event.
+// reached the agent; activity-only progress is throttled so the store is
+// written with phases and deliveries, not with every harness event.
 func (e *Engine) observe(ctx context.Context, runID, revision string, a *workflow.Attempt, o Observation) (bool, error) {
 	same := func(x workflow.Delivery) func(workflow.Delivery) bool {
 		return func(y workflow.Delivery) bool {
@@ -46,11 +46,18 @@ func (e *Engine) observe(ctx context.Context, runID, revision string, a *workflo
 	if len(deliveries) == 0 && progress == nil {
 		return false, nil
 	}
-	kind := "attempt.progress"
-	if len(deliveries) > 0 {
-		kind = "attempt.steering"
+	// Progress lives outside the versioned run document: frequent activity
+	// must not make clients' version-fenced commands stale.
+	if progress != nil {
+		progress.UpdatedAt = e.now()
+		if err := e.Store.SetProgress(ctx, runID, a.ID, *progress); err != nil {
+			return true, err
+		}
 	}
-	_, err := e.update(ctx, runID, revision, kind, func(_ *workflow.Run, v *workflow.Revision) error {
+	if len(deliveries) == 0 {
+		return true, nil
+	}
+	_, err := e.update(ctx, runID, revision, "attempt.steering", func(_ *workflow.Run, v *workflow.Revision) error {
 		current := v.Attempt(a.ID)
 		if current == nil || current.State != "running" {
 			return workflow.ErrConflict
@@ -59,10 +66,6 @@ func (e *Engine) observe(ctx context.Context, runID, revision string, a *workflo
 			if !slices.ContainsFunc(current.Steering, same(d)) {
 				current.Steering = append(current.Steering, d)
 			}
-		}
-		if progress != nil {
-			progress.UpdatedAt = e.now()
-			current.Progress = progress
 		}
 		return nil
 	})

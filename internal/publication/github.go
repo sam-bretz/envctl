@@ -134,17 +134,9 @@ func target(repo workflow.Repository) (workflow.PublicationTarget, error) {
 		}
 		return t, nil
 	}
-	raw := repo.URL
-	if strings.HasPrefix(raw, "git@github.com:") {
-		raw = "https://github.com/" + strings.TrimPrefix(raw, "git@github.com:")
-	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Hostname() != "github.com" || u.Port() != "" || (u.Scheme == "https" && u.User != nil) || (u.Scheme != "https" && u.Scheme != "ssh") || u.RawQuery != "" || u.Fragment != "" {
-		return workflow.PublicationTarget{}, errors.New("repository needs an explicit GitHub publication destination")
-	}
-	name := strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
-	if !repositoryName.MatchString(name) {
-		return workflow.PublicationTarget{}, errors.New("invalid GitHub source destination")
+	name, err := githubName(repo.URL)
+	if err != nil {
+		return workflow.PublicationTarget{}, err
 	}
 	base := repo.Ref
 	if base == "HEAD" || base == "" || sha.MatchString(base) {
@@ -155,6 +147,22 @@ func target(repo workflow.Repository) (workflow.PublicationTarget, error) {
 		return workflow.PublicationTarget{}, errors.New("invalid publication base branch")
 	}
 	return workflow.PublicationTarget{Provider: "github", Repository: name, Base: base}, nil
+}
+
+// githubName accepts only unambiguous github.com HTTPS/SSH repository URLs.
+func githubName(raw string) (string, error) {
+	if strings.HasPrefix(raw, "git@github.com:") {
+		raw = "https://github.com/" + strings.TrimPrefix(raw, "git@github.com:")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() != "github.com" || u.Port() != "" || (u.Scheme == "https" && u.User != nil) || (u.Scheme != "https" && u.Scheme != "ssh") || u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New("repository needs an explicit GitHub publication destination")
+	}
+	name := strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
+	if !repositoryName.MatchString(name) {
+		return "", errors.New("invalid GitHub source destination")
+	}
+	return name, nil
 }
 func writes(a engine.Assignment, id string) bool {
 	for _, n := range a.Revision.Config.Workflow.Nodes {
@@ -248,9 +256,11 @@ func (b *Broker) remote(name string) string {
 	}
 	return "https://github.com/" + name + ".git"
 }
-func git(ctx context.Context, dir string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
+
+// gitCommand isolates broker Git (and git-lfs, which inherits these -c
+// settings) from hooks, user/system configuration and prompts; the only
+// credential source is the coordinator's gh connection.
+func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	args = append([]string{"-c", "core.hooksPath=/dev/null", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"}, args...)
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
@@ -260,16 +270,45 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 		}
 	}
 	cmd.Env = append(cmd.Env, "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+	cmd.Stderr = io.Discard
+	return cmd
+}
+
+// gitStatus reports a completed command's exit code separately from failures
+// to run it, for queries whose non-zero exit is a meaningful answer.
+func gitStatus(ctx context.Context, dir string, timeout time.Duration, args ...string) (string, int, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := gitCommand(ctx, dir, args...)
 	var out bounded
 	cmd.Stdout = &out
-	cmd.Stderr = io.Discard
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			return "", ctx.Err()
-		}
+	err := cmd.Run()
+	if ctx.Err() != nil {
+		return "", -1, ctx.Err()
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return "", exit.ExitCode(), nil
+	}
+	if err != nil {
+		return "", -1, errors.New("broker Git operation failed to run or exceeded its output bound")
+	}
+	return strings.TrimSpace(out.String()), 0, nil
+}
+
+func git(ctx context.Context, dir string, args ...string) (string, error) {
+	return gitTimeout(ctx, dir, 2*time.Minute, args...)
+}
+
+func gitTimeout(ctx context.Context, dir string, timeout time.Duration, args ...string) (string, error) {
+	out, code, err := gitStatus(ctx, dir, timeout, args...)
+	if err != nil {
+		return "", err
+	}
+	if code != 0 {
 		return "", errors.New("broker Git operation failed; verify source, destination and coordinator credentials")
 	}
-	return strings.TrimSpace(out.String()), nil
+	return out, nil
 }
 func objectDir(ctx context.Context, dir string) (string, error) {
 	p := filepath.Join(dir, "objects.git")
@@ -401,6 +440,21 @@ func (b *Broker) probeRepo(ctx context.Context, a engine.Assignment, repo workfl
 		if _, err = git(ctx, objects, "push", "--dry-run", "--porcelain", "--force-with-lease=refs/heads/"+branch+":", b.remote(dest.Repository), pin+":refs/heads/"+branch); err != nil {
 			return err
 		}
+		// LFS publication is foreseeable from the pinned tree. Submodule push
+		// access is not required here: third-party modules the worker never
+		// changes must not block Plan, and publish reports any gap explicitly.
+		declared, err := lfsDeclared(ctx, objects, pin)
+		if err != nil {
+			return err
+		}
+		if declared {
+			if override, err := lfsOverride(ctx, objects, pin); err != nil || override {
+				return errors.Join(err, errors.New("pinned source configures a custom Git LFS endpoint in .lfsconfig; the publication broker only uploads to the GitHub destination"))
+			}
+			if err = lfsAvailable(ctx, objects); err != nil {
+				return err
+			}
+		}
 	}
 	if locked.Binding == "" {
 		locked = lockedTarget{Binding: binding(a, repo), Target: dest, BaseSHA: base, SourceSHA: pin, Branch: branch}
@@ -441,6 +495,9 @@ func verified(p pull, t lockedTarget, commit, mark string) bool {
 	return p.Number > 0 && p.State == "open" && p.Head.SHA == commit && p.Head.Ref == t.Branch && strings.EqualFold(p.Head.Repo.FullName, t.Target.Repository) && strings.EqualFold(p.Base.Repo.FullName, t.Target.Repository) && p.Base.Ref == t.Target.Base && strings.Contains(p.Body, mark) && p.URL == fmt.Sprintf("https://github.com/%s/pull/%d", t.Target.Repository, p.Number)
 }
 
+// Publish returns PR URLs keyed by repository ID. Draft PRs opened in
+// submodule repositories for commits their destination lacked are keyed
+// "<repository>/<submodule path>"; repository IDs never contain "/".
 func (b *Broker) Publish(ctx context.Context, a engine.Assignment, r workflow.Result) (map[string]string, error) {
 	unlock, err := b.lock(ctx, a)
 	if err != nil {
@@ -460,6 +517,7 @@ func (b *Broker) Publish(ctx context.Context, a engine.Assignment, r workflow.Re
 		return nil, errors.New("publication requires exact-result human approval")
 	}
 	urls := map[string]string{}
+	changed := 0
 	for _, repo := range a.Revision.Config.Repositories {
 		if r.Commits[repo.ID] == a.Revision.SourcePins[repo.ID] {
 			continue
@@ -467,100 +525,89 @@ func (b *Broker) Publish(ctx context.Context, a engine.Assignment, r workflow.Re
 		if !writes(a, repo.ID) {
 			return nil, errors.New("publication includes an undeclared repository writer")
 		}
-		url, err := b.publishRepo(ctx, a, repo, r)
+		url, modules, err := b.publishRepo(ctx, a, repo, r)
 		if err != nil {
 			return nil, err
 		}
 		urls[repo.ID] = url
+		changed++
+		for _, m := range modules {
+			urls[repo.ID+"/"+m.Path] = m.URL
+		}
 	}
-	if len(urls) == 0 {
+	if changed == 0 {
 		return nil, errors.New("approved change contains no repository changes to publish")
 	}
 	return urls, nil
 }
-func (b *Broker) publishRepo(ctx context.Context, a engine.Assignment, repo workflow.Repository, r workflow.Result) (string, error) {
+
+// publishRepo verifies the retained source and its submodule/LFS companion
+// before any external effect, then publishes children before parents: changed
+// submodule commits, this repository's LFS objects, its branch, and its PR.
+func (b *Broker) publishRepo(ctx context.Context, a engine.Assignment, repo workflow.Repository, r workflow.Result) (string, []modulePR, error) {
 	dir, err := b.dir(a, repo.ID)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	var locked lockedTarget
 	if load(filepath.Join(dir, "target.json"), &locked) != nil || locked.Binding != binding(a, repo) {
-		return "", errors.New("publication has no matching Plan destination lock")
+		return "", nil, errors.New("publication has no matching Plan destination lock")
 	}
 	base, err := b.commit(ctx, locked.Target.Repository, locked.Target.Base)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if base != locked.BaseSHA {
-		return "", errors.New("destination base changed; approval must follow revalidated QA")
+		return "", nil, errors.New("destination base changed; approval must follow revalidated QA")
 	}
 	commit := r.Commits[repo.ID]
 	artifact, ok := r.Sources[repo.ID]
 	if !ok || !sha.MatchString(commit) {
-		return "", errors.New("publication requires a retained source bundle for each changed repository")
+		return "", nil, errors.New("publication requires a retained source bundle for each changed repository")
 	}
 	bundle, err := b.Store.Artifact(artifact.Digest)
 	if err != nil || int64(len(bundle)) != artifact.Size {
-		return "", errors.New("publication source bundle is missing or corrupt")
+		return "", nil, errors.New("publication source bundle is missing or corrupt")
 	}
 	objects, err := objectDir(ctx, dir)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	file, err := os.CreateTemp(dir, ".bundle-")
-	if err != nil {
-		return "", err
-	}
-	defer os.Remove(file.Name())
-	if _, err = file.Write(bundle); err != nil {
-		file.Close()
-		return "", err
-	}
-	if err = file.Close(); err != nil {
-		return "", err
-	}
-	if _, err = git(ctx, objects, "bundle", "verify", file.Name()); err != nil {
-		return "", err
-	}
-	if _, err = git(ctx, objects, "fetch", "--quiet", "--no-tags", file.Name(), commit); err != nil {
-		return "", err
+	if err = fetchBundle(ctx, objects, dir, bundle, commit); err != nil {
+		return "", nil, err
 	}
 	if _, err = git(ctx, objects, "merge-base", "--is-ancestor", locked.SourceSHA, commit); err != nil {
-		return "", errors.New("candidate does not descend from the planned source pin")
+		return "", nil, errors.New("candidate does not descend from the planned source pin")
+	}
+	c, err := b.companion(ctx, objects, repo, r, locked.SourceSHA, commit)
+	if err != nil {
+		return "", nil, err
+	}
+	var modules []modulePR
+	if c != nil {
+		nodes, err := moduleTree(ctx, objects, dir, c, locked.SourceSHA)
+		if err != nil {
+			return "", nil, err
+		}
+		if err = verifyObjects(ctx, objects, nodes); err != nil {
+			return "", nil, err
+		}
+		if modules, err = b.publishModules(ctx, a, repo, r, dir, objects, locked, c, nodes); err != nil {
+			return "", nil, err
+		}
+		// The root is last in children-first order.
+		if err = b.pushLFS(ctx, objects, locked.Target.Repository, c, nodes[len(nodes)-1].entry.LFS); err != nil {
+			return "", nil, err
+		}
 	}
 	intent := publicationIntent{Binding: locked.Binding, WorkDigest: r.WorkDigest(), Commit: commit, Branch: locked.Branch}
 	if err = freeze(filepath.Join(dir, "intent.json"), intent); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	head, err := b.branch(ctx, locked.Target.Repository, locked.Branch)
-	if err != nil {
-		return "", err
+	if err = b.pushBranch(ctx, objects, locked, commit); err != nil {
+		return "", nil, err
 	}
-	if head == "" {
-		if _, err = git(ctx, objects, "push", "--porcelain", "--force-with-lease=refs/heads/"+locked.Branch+":", b.remote(locked.Target.Repository), commit+":refs/heads/"+locked.Branch); err != nil {
-			return "", err
-		}
-	} else if head != commit {
-		return "", errors.New("output branch changed outside this publication; refusing to overwrite")
-	}
-	// Re-read after a push; accepting command exit alone would not verify the
-	// exact remote head that the subsequent PR will expose.
-	head, err = b.branch(ctx, locked.Target.Repository, locked.Branch)
-	if err != nil || head != commit {
-		return "", errors.New("remote output branch does not match the approved commit")
-	}
-	mark := marker(a, repo.ID, r)
-	var pulls []pull
-	if err = b.API.Call(ctx, "GET", pullList(locked.Target, locked.Branch), nil, &pulls); err != nil {
-		return "", err
-	}
-	var chosen pull
-	if len(pulls) > 0 {
-		if len(pulls) != 1 || !verified(pulls[0], locked, commit, mark) {
-			return "", errors.New("existing PR does not match this approved publication")
-		}
-		chosen = pulls[0]
-	} else {
+	chosen, err := b.reconcilePR(ctx, locked, commit, marker(a, repo.ID, r), strings.TrimSpace(a.Run.Name), func(mark string) string {
 		body := r.Summary + "\n\nValidated commits:\n"
 		ids := make([]string, 0, len(r.Commits))
 		for id := range r.Commits {
@@ -570,6 +617,7 @@ func (b *Broker) publishRepo(ctx context.Context, a engine.Assignment, repo work
 		for _, id := range ids {
 			body += "- " + id + ": `" + r.Commits[id] + "`\n"
 		}
+		body += modulesSection(modules)
 		body += "\nValidation:\n"
 		nodes := make([]string, 0, len(a.Revision.Checkpoints))
 		for id := range a.Revision.Checkpoints {
@@ -585,28 +633,68 @@ func (b *Broker) publishRepo(ctx context.Context, a engine.Assignment, repo work
 			}
 		}
 		body += "\nWorkflow run: `" + a.Run.ID + "`; revision: `" + a.Revision.ID + "`.\n"
-		body += "\n" + mark
-		title := strings.TrimSpace(a.Run.Name)
-		if len(title) > 200 {
-			title = title[:200]
-		}
-		if title == "" {
-			title = "envctl approved change"
-		}
-		request := map[string]any{"title": title, "head": locked.Branch, "base": locked.Target.Base, "body": body, "draft": true, "maintainer_can_modify": false}
-		if err = b.API.Call(ctx, "POST", "repos/"+locked.Target.Repository+"/pulls", request, &chosen); err != nil {
-			return "", err
-		}
-		if !verified(chosen, locked, commit, mark) {
-			return "", errors.New("created PR does not expose the approved commit")
-		}
+		return body + "\n" + mark
+	})
+	if err != nil {
+		return "", nil, err
 	}
 	if err = freeze(filepath.Join(dir, "published.json"), struct {
 		Intent publicationIntent
 		URL    string
 		Number int
 	}{intent, chosen.URL, chosen.Number}); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return chosen.URL, nil
+	return chosen.URL, modules, nil
+}
+
+// pushBranch creates the output branch only when it is absent, then re-reads
+// it: command exit alone would not verify the exact head a PR will expose.
+func (b *Broker) pushBranch(ctx context.Context, objects string, t lockedTarget, commit string) error {
+	head, err := b.branch(ctx, t.Target.Repository, t.Branch)
+	if err != nil {
+		return err
+	}
+	if head == "" {
+		if _, err = git(ctx, objects, "push", "--porcelain", "--force-with-lease=refs/heads/"+t.Branch+":", b.remote(t.Target.Repository), commit+":refs/heads/"+t.Branch); err != nil {
+			return err
+		}
+	} else if head != commit {
+		return errors.New("output branch changed outside this publication; refusing to overwrite")
+	}
+	head, err = b.branch(ctx, t.Target.Repository, t.Branch)
+	if err != nil || head != commit {
+		return errors.New("remote output branch does not match the approved commit")
+	}
+	return nil
+}
+
+// reconcilePR adopts the one PR carrying this publication's marker, or opens a
+// draft. A lost create acknowledgement reconciles to that PR on replay.
+func (b *Broker) reconcilePR(ctx context.Context, t lockedTarget, commit, mark, title string, body func(string) string) (pull, error) {
+	var pulls []pull
+	if err := b.API.Call(ctx, "GET", pullList(t.Target, t.Branch), nil, &pulls); err != nil {
+		return pull{}, err
+	}
+	if len(pulls) > 0 {
+		if len(pulls) != 1 || !verified(pulls[0], t, commit, mark) {
+			return pull{}, errors.New("existing PR does not match this approved publication")
+		}
+		return pulls[0], nil
+	}
+	if len(title) > 200 {
+		title = title[:200]
+	}
+	if title == "" {
+		title = "envctl approved change"
+	}
+	var chosen pull
+	request := map[string]any{"title": title, "head": t.Branch, "base": t.Target.Base, "body": body(mark), "draft": true, "maintainer_can_modify": false}
+	if err := b.API.Call(ctx, "POST", "repos/"+t.Target.Repository+"/pulls", request, &chosen); err != nil {
+		return pull{}, err
+	}
+	if !verified(chosen, t, commit, mark) {
+		return pull{}, errors.New("created PR does not expose the approved commit")
+	}
+	return chosen, nil
 }

@@ -6,9 +6,9 @@ hero:
   tagline: "One stack per branch. Two people or ten agents on one machine, no port fights, no shared database."
   actions:
     - text: Install envctl
-      link: /docs/install/
+      link: /envctl/install/
     - text: Quick start
-      link: /docs/quick-start/
+      link: /envctl/quick-start/
       variant: secondary
 ---
 
@@ -20,12 +20,12 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
   <Card title="You run the stack by hand">
     You already type `docker compose up`. envctl keeps that workflow and gives every worktree its own project, network, volumes, and ports.
 
-    [Quick start →](/docs/quick-start/)
+    [Quick start →](/envctl/quick-start/)
   </Card>
   <Card title="You run coding agents in worktrees">
     Two hooks make every Claude Code worktree self-provisioning: the environment starts when the worktree is created and is destroyed when it goes.
 
-    [Agents →](/docs/agents/)
+    [Agents →](/envctl/agents/)
   </Card>
 </CardGrid>
 
@@ -45,21 +45,26 @@ The guide teaches the agent the manifest, the commands, and the common fixes, so
   <Card title="Concepts">
     Features, environments, port modes, and the rendered project, in two minutes.
 
-    [Understand the model →](/docs/concepts/)
+    [Understand the model →](/envctl/concepts/)
   </Card>
   <Card title="Configuration">
     Write `envctl.yaml`, choose a port mode, expose entrypoints, and point host tooling at the env file.
 
-    [Configure a repo →](/docs/configuration/)
+    [Configure a repo →](/envctl/configuration/)
+  </Card>
+  <Card title="Your first workflow">
+    Take one feature from an objective to a reviewed pull request, with agents working in an isolated VM.
+
+    [Run a workflow →](/envctl/first-workflow/)
   </Card>
   <Card title="CLI reference">
     Every command, flag, and output shape, including `--json` for scripts and agents.
 
-    [Read the reference →](/docs/cli-reference/)
+    [Read the reference →](/envctl/cli-reference/)
   </Card>
   <Card title="Roadmap">
     Bubble Tea workflows, executable planning, invocation plugins, isolated VMs, and teammate sharing, in build order.
 
-    [See what is next →](/docs/roadmap/)
+    [See what is next →](/envctl/roadmap/)
   </Card>
 </CardGrid>

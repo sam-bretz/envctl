@@ -3,7 +3,7 @@ title: Workflow runtime implementation plan
 description: Bubble Tea workflows, executable planning, invocation plugins, VM isolation, and checkpointed execution.
 ---
 
-Status: implementation plan, revised 11 September 2026. Bubble Tea and the product direction are accepted. Partial implementation exists in the workspace; this document defines the target contract, not a claim that every capability is delivered. Delivery order and acceptance criteria are in the [roadmap](/docs/roadmap/).
+Status: implementation plan, revised 11 September 2026. Bubble Tea and the product direction are accepted. Partial implementation exists in the workspace; this document defines the target contract, not a claim that every capability is delivered. Delivery order and acceptance criteria are in the [roadmap](/envctl/roadmap/).
 
 ## Product contract
 
@@ -289,7 +289,7 @@ Writer quiescence has a durable ownership record. Readiness does not restart tho
 
 This first adapter covers a database seeded under its configured role. Cluster-wide roles, original ownership/ACL replay, and generic third-party dataset adapters remain unfinished. The current dumps deliberately omit original ownership and grants; do not use this as proof of arbitrary PostgreSQL cluster restoration. `pg_dump` supplies a consistent single-database dump, while `pg_restore --single-transaction` makes loading that dump atomic inside the rebuilt database. [PostgreSQL dump documentation](https://www.postgresql.org/docs/18/app-pgdump.html), [restore documentation](https://www.postgresql.org/docs/18/app-pgrestore.html).
 
-The experimental `http-fixture` adapter now uses the same durable operation and artifact transport with its own snapshot format and application-record verification. `envctl run fixture init` scaffolds its pinned service and seed. The bundled `builtin:playwright` plugin prepares Chromium, probes the guest application, and executes commit-bound browser checks with screenshot evidence. Both have real VM component acceptance results; see the [fixtures guide](/docs/workflow-fixtures/) for configuration and limits.
+The experimental `http-fixture` adapter now uses the same durable operation and artifact transport with its own snapshot format and application-record verification. `envctl run fixture init` scaffolds its pinned service and seed. The bundled `builtin:playwright` plugin prepares Chromium, probes the guest application, and executes commit-bound browser checks with screenshot evidence. Both have real VM component acceptance results; see the [fixtures guide](/envctl/workflow-fixtures/) for configuration and limits.
 
 Invocation configuration can be amended without changing project defaults:
 
@@ -384,7 +384,7 @@ The current Bubble Tea review controls include `[` / `]` for revision history, `
 
 Start the shell against recorded events, then connect the real API. Full terminal emulation is outside the first release: show structured events and offer explicit terminal attachment for supported harnesses. Record steering against a revision/recipient; specification changes use revision operations.
 
-The Conversation panel now shows a running attempt's live phase, resume generation, current check and recent activity parsed from the harness's own event stream (Codex `exec --json`, Claude `stream-json`), plus each message's delivery status. Live steering is interrupt-and-resume: harnesses accept no input mid-run, so the coordinator records a new invocation generation, stops the running guest job, and resumes the same explicit session in the same worktree with the new messages. The frozen worker assignment reviewed by the supervisor does not change. Supervisors see every message for their stage. Messages arriving during review interrupt and resume the supervisor. Each role is bounded to 8 live resumes per attempt. See the [CLI reference](/docs/cli-reference/#experimental-live-progress-and-steering).
+The Conversation panel now shows a running attempt's live phase, resume generation, current check and recent activity parsed from the harness's own event stream (Codex `exec --json`, Claude `stream-json`), plus each message's delivery status. Live steering is interrupt-and-resume: harnesses accept no input mid-run, so the coordinator records a new invocation generation, stops the running guest job, and resumes the same explicit session in the same worktree with the new messages. The frozen worker assignment reviewed by the supervisor does not change. Supervisors see every message for their stage. Messages arriving during review interrupt and resume the supervisor. Each role is bounded to 8 live resumes per attempt. See the [CLI reference](/envctl/cli-reference/#experimental-live-progress-and-steering).
 
 **No-progress recovery.** The coordinator watches each running worker and supervisor job for harness output. Any output counts, including events the activity summary omits, such as reasoning. The last-output time is kept in the attempt receipt, so restarting the coordinator neither resets nor trips the window. After `stall_seconds` (default 600) of silence it acts in steps:
 

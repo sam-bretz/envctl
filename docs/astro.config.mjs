@@ -2,8 +2,8 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
 export default defineConfig({
-  site: 'https://envctl.internal',
-  base: '/docs',
+  site: 'https://sam-bretz.github.io',
+  base: '/envctl',
   integrations: [
     starlight({
       title: 'envctl',
@@ -12,6 +12,7 @@ export default defineConfig({
         { label: 'Start here', items: [
           { label: 'Install', slug: 'install' },
           { label: 'Quick start', slug: 'quick-start' },
+          { label: 'Your first workflow', slug: 'first-workflow' },
           { label: 'Concepts', slug: 'concepts' },
         ]},
         { label: 'Guides', items: [

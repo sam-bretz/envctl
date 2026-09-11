@@ -10,7 +10,7 @@ envctl gives each git worktree its own isolated docker-compose environment. The 
 
 Version 2 workflows use a persistent coordinator, Bubble Tea, and dedicated local VMs. Use `envctl run validate`, `envctl run create --task ...`, `envctl run readiness <run-id> --json`, and `envctl ui`. Keep existing version 1 configuration and lifecycle commands working when helping users migrate.
 
-Before a first run, each harness needs a credential for its VMs; see [Install](/docs/install/#set-up-agent-credentials-workflow-runtime). Harnesses accept only long-lived credentials, never a user's interactive login, whose rotating refresh token would revoke the host login: Claude takes `ANTHROPIC_API_KEY` or a `claude setup-token` token; Codex takes a Codex access token (ChatGPT Business/Enterprise, created at chatgpt.com/admin/access-tokens) or `OPENAI_API_KEY`. Ask the user to create the token in their own terminal or browser and save it to a private file referenced as `credential: file:/absolute/path`. Never ask for a token in chat or print it.
+Before a first run, each harness needs a credential for its VMs; see [Install](/envctl/install/#set-up-agent-credentials-workflow-runtime). Harnesses accept only long-lived credentials, never a user's interactive login, whose rotating refresh token would revoke the host login: Claude takes `ANTHROPIC_API_KEY` or a `claude setup-token` token; Codex takes a Codex access token (ChatGPT Business/Enterprise, created at chatgpt.com/admin/access-tokens) or `OPENAI_API_KEY`. Ask the user to create the token in their own terminal or browser and save it to a private file referenced as `credential: file:/absolute/path`. Never ask for a token in chat or print it.
 
 Plan must verify downstream requirements before dependent execution. Attach a local executable package or the bundled Playwright package using `envctl run plugin add <run-id> --file browser.yaml`; attachments are frozen per invocation revision. Use `envctl run fixture init fixtures/http` to scaffold the HTTP dataset emulator, then commit the generated source and seed. PostgreSQL and HTTP fixture datasets retain checksum-verified snapshots outside the VM.
 
@@ -26,7 +26,7 @@ Use `d` to compare a checkpoint against its revision's source pins. To compare c
 
 Use `envctl run artifact <digest> --output <new-file>` to export checksum-verified evidence. Existing files are never overwritten. Agent-created temporary reports belong in the attempt's supplied scratch directory; read-only source stages must not add untracked report directories to repositories.
 
-This workflow backend remains experimental. Full rewind, parallel execution, provider expansion, and complete database metadata replay are not all delivered. Read [the fixtures guide](/docs/workflow-fixtures/), [the roadmap](/docs/roadmap/), and `docs/implementation-progress.md` before claiming support or milestone completion.
+This workflow backend remains experimental. Full rewind, parallel execution, provider expansion, and complete database metadata replay are not all delivered. Read [the fixtures guide](/envctl/workflow-fixtures/), [the roadmap](/envctl/roadmap/), and `docs/implementation-progress.md` before claiming support or milestone completion.
 
 ## Setup checklist
 

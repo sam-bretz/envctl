@@ -97,14 +97,7 @@ func (b *Backend) Prepare(ctx context.Context, a engine.Assignment) (engine.Prep
 	if err != nil {
 		return engine.Prepared{}, err
 	}
-	spec := vm.DefaultSpec(a.Revision.Runtime.ID)
-	spec.CPUs = c.Runtime.CPUs
-	spec.MemoryGiB = c.Runtime.MemoryGiB
-	spec.DiskGiB = c.Runtime.DiskGiB
-	if c.Runtime.Image != "" {
-		spec.Image = c.Runtime.Image
-		spec.ImageDigest = c.Runtime.ImageDigest
-	}
+	spec := runtimeSpec(a)
 	instance, err := b.Provider.Ensure(ctx, spec)
 	if err != nil {
 		return engine.Prepared{}, errors.New("local VM provisioning or bootstrap failed")
@@ -146,6 +139,44 @@ func (b *Backend) Prepare(ctx context.Context, a engine.Assignment) (engine.Prep
 		installed[h.Kind] = true
 	}
 	return engine.Prepared{SourcePins: pins, Runtime: workflow.RuntimeState{ID: instance.ID, Provider: "lima", Location: "local", Ready: true, State: "running", DaemonID: instance.DaemonID, ImageDigest: spec.ImageDigest}}, nil
+}
+
+func runtimeSpec(a engine.Assignment) vm.Spec {
+	c := a.Revision.Config
+	spec := vm.DefaultSpec(a.Revision.Runtime.ID)
+	spec.CPUs = c.Runtime.CPUs
+	spec.MemoryGiB = c.Runtime.MemoryGiB
+	spec.DiskGiB = c.Runtime.DiskGiB
+	if c.Runtime.Image != "" {
+		spec.Image = c.Runtime.Image
+		spec.ImageDigest = c.Runtime.ImageDigest
+	}
+	return spec
+}
+
+// ensureRuntime restarts a stopped owned VM (host sleep, crash or reboot) under
+// its original reservation. The Docker daemon identity must survive; a changed
+// identity means the guest's state cannot be trusted and needs explicit work.
+// A missing VM is never silently recreated.
+func (b *Backend) ensureRuntime(ctx context.Context, a engine.Assignment) error {
+	instance, err := b.Provider.Inspect(ctx, a.Revision.Runtime.ID)
+	if errors.Is(err, vm.ErrMissing) {
+		return errors.New("owned local VM is missing; rewind or cancel the revision")
+	}
+	if err != nil {
+		return err
+	}
+	if instance.State == "running" {
+		return nil
+	}
+	restored, err := b.Provider.Ensure(ctx, runtimeSpec(a))
+	if err != nil {
+		return errors.New("stopped local VM could not be restarted")
+	}
+	if a.Revision.Runtime.DaemonID == "" || restored.DaemonID != a.Revision.Runtime.DaemonID {
+		return errors.New("restarted VM reports a different Docker daemon identity")
+	}
+	return nil
 }
 
 // Assignment inputs come from accepted direct predecessors. Unequal commits
@@ -232,13 +263,26 @@ func stackSpec(a engine.Assignment, id string, dirs map[string]string) gueststac
 }
 
 func (b *Backend) Readiness(ctx context.Context, a engine.Assignment) ([]workflow.Probe, error) {
+	probes, err := b.readiness(ctx, a, a.Revision.Requirements())
+	if err != nil {
+		return nil, err
+	}
+	return b.pluginProbes(ctx, a, probes)
+}
+
+func (b *Backend) readiness(ctx context.Context, a engine.Assignment, capabilities []string) ([]workflow.Probe, error) {
 	now := time.Now().UTC()
 	pins, err := readinessCommits(a)
 	if err != nil {
 		return nil, err
 	}
+	// Every capability below executes in the guest; a stopped VM is restored
+	// first so readiness reports the application, not the host's power state.
+	if err = b.ensureRuntime(ctx, a); err != nil {
+		return nil, err
+	}
 	var probes []workflow.Probe
-	for _, capability := range a.Revision.Requirements() {
+	for _, capability := range capabilities {
 		passed := false
 		detail := "capability has no prepared invocation binding"
 		var err error
@@ -316,7 +360,7 @@ func (b *Backend) Readiness(ctx context.Context, a engine.Assignment) ([]workflo
 		}
 		probes = append(probes, workflow.Probe{Capability: capability, Binding: "local:" + capability, ConfigDigest: workflow.Digest(a.Revision.Config), RuntimeID: a.Revision.Runtime.ID, Passed: passed, Detail: detail, EvidenceDigest: evidence.Digest, CheckedAt: now, ExpiresAt: now.Add(2 * time.Minute)})
 	}
-	return b.pluginProbes(ctx, a, probes)
+	return probes, nil
 }
 
 // SourcePins identify the immutable repository bases. A restored revision must

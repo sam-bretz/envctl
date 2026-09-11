@@ -164,7 +164,10 @@ func (b *Backend) baselineData(ctx context.Context, a engine.Assignment, p guest
 			}
 		}
 		if inherited != nil {
-			if err = b.dataAdapter(a, p).Restore(ctx, "baseline_restore_"+spec.ID, spec, *inherited); err != nil {
+			snapshot := *inherited
+			if err = b.dataOperation(ctx, a, p, "baseline_restore_"+spec.ID, func(c checkpoint.Client) error {
+				return c.Restore(ctx, "baseline_restore_"+spec.ID, spec, snapshot)
+			}); err != nil {
 				return baseline, err
 			}
 			baseline.Snapshots[spec.ID] = *inherited
@@ -187,13 +190,18 @@ func (b *Backend) baselineData(ctx context.Context, a engine.Assignment, p guest
 			return baseline, err
 		}
 		baseline.Seeds[spec.ID] = artifact
-		snapshot, err := b.dataAdapter(a, p).Seed(ctx, "baseline_seed_"+spec.ID, spec, artifact)
-		if err != nil {
+		var snapshot workflow.DatasetSnapshot
+		if err = b.dataOperation(ctx, a, p, "baseline_seed_"+spec.ID, func(c checkpoint.Client) (e error) {
+			snapshot, e = c.Seed(ctx, "baseline_seed_"+spec.ID, spec, artifact)
+			return e
+		}); err != nil {
 			return baseline, err
 		}
 		// Exercise the restore path during Plan rather than discover missing
 		// tools/permissions only when the user first rewinds.
-		if err = b.dataAdapter(a, p).Restore(ctx, "baseline_verify_"+spec.ID, spec, snapshot); err != nil {
+		if err = b.dataOperation(ctx, a, p, "baseline_verify_"+spec.ID, func(c checkpoint.Client) error {
+			return c.Restore(ctx, "baseline_verify_"+spec.ID, spec, snapshot)
+		}); err != nil {
 			return baseline, err
 		}
 		baseline.Snapshots[spec.ID] = snapshot
@@ -226,6 +234,9 @@ func (b *Backend) datasetReadiness(ctx context.Context, a engine.Assignment) (bo
 		return false, "dataset operation is preserving stopped writers until recovery completes", nil
 	}
 	if _, err = b.baselineData(ctx, a, p); err != nil {
+		if errors.Is(err, errDataRecoveryExhausted) {
+			return false, err.Error(), err
+		}
 		return false, "dataset seed or restore verification needs recovery", err
 	}
 	for _, spec := range a.Revision.Config.Data.Datasets {
@@ -292,7 +303,8 @@ func (b *Backend) restoreDataInputs(ctx context.Context, a engine.Assignment, p 
 		if !ok {
 			return errors.New("dataset predecessor does not cover every required dataset")
 		}
-		if err = b.dataAdapter(a, p).Restore(ctx, a.Attempt.ID+"_restore_"+spec.ID, spec, snapshot); err != nil {
+		op := a.Attempt.ID + "_restore_" + spec.ID
+		if err = b.dataOperation(ctx, a, p, op, func(c checkpoint.Client) error { return c.Restore(ctx, op, spec, snapshot) }); err != nil {
 			return err
 		}
 	}
@@ -325,11 +337,14 @@ func (b *Backend) captureData(ctx context.Context, a engine.Assignment, r *attem
 	}
 	snapshots := map[string]workflow.DatasetSnapshot{}
 	for _, spec := range a.Revision.Config.Data.Datasets {
-		snapshot, err := b.dataAdapter(a, *r.Stack).Capture(ctx, a.Attempt.ID+"_capture_"+spec.ID, spec)
-		if err != nil {
+		op := a.Attempt.ID + "_capture_" + spec.ID
+		if err := b.dataOperation(ctx, a, *r.Stack, op, func(c checkpoint.Client) error {
+			snapshot, e := c.Capture(ctx, op, spec)
+			snapshots[spec.ID] = snapshot
+			return e
+		}); err != nil {
 			return err
 		}
-		snapshots[spec.ID] = snapshot
 	}
 	if err := b.endData(ctx, a, *r.Stack); err != nil {
 		return err

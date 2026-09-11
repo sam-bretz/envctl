@@ -32,6 +32,34 @@ type Client struct {
 	Prepared gueststack.Prepared
 	Store    *runstore.Store
 	Revision string
+	// Generation changes only after a proven terminal failure of the previous
+	// guest job. Zero preserves the original job identities.
+	Generation int
+}
+
+// TerminalFailure means the guest job for this generation has ended without a
+// verified result: its process is gone, so a new generation cannot overlap it.
+// Transport errors are never terminal; they reconnect to the same job.
+type TerminalFailure struct {
+	State  string
+	Detail string
+	Output string // bounded tail of the job's already-redacted journal
+}
+
+func (e *TerminalFailure) Error() string {
+	return "dataset operation " + e.State + ": " + e.Detail
+}
+
+func terminalState(state string) bool {
+	return state == "failed" || state == "timed-out" || state == "cancelled" || state == "interrupted"
+}
+
+func outputTail(s string) string {
+	const limit = 16 << 10
+	if len(s) > limit {
+		return s[len(s)-limit:]
+	}
+	return s
 }
 
 // Postgres is retained as a source-compatible name for the original adapter.
@@ -120,6 +148,15 @@ func (p Client) run(ctx context.Context, operationID string, spec workflow.Datas
 		Revision, Operation, Action, Container, Input, Version string
 		Spec                                                   workflow.Dataset
 	}{p.Revision, operationID, action, container, inputDigest, version, spec})
+	if p.Generation < 0 {
+		return workflow.DatasetSnapshot{}, errors.New("invalid dataset recovery generation")
+	}
+	if p.Generation > 0 {
+		identity = workflow.Digest(struct {
+			Base       string
+			Generation int
+		}{identity, p.Generation})
+	}
 	jobID := "data_" + identity[:40]
 	inputFile := ""
 	if input != nil {
@@ -167,6 +204,9 @@ if digest:
 		logs.WriteString(status.Output)
 		cursor = status.Cursor
 		if status.Truncated || logs.Len() > 1<<20 {
+			if status.State == "completed" || terminalState(status.State) {
+				return workflow.DatasetSnapshot{}, &TerminalFailure{State: status.State, Detail: "output exceeded its evidence bound", Output: outputTail(logs.String())}
+			}
 			return workflow.DatasetSnapshot{}, errors.New("dataset operation exceeded its evidence bound")
 		}
 		if status.Output != "" {
@@ -175,8 +215,11 @@ if digest:
 		if status.State == "completed" {
 			break
 		}
+		if terminalState(status.State) {
+			return workflow.DatasetSnapshot{}, &TerminalFailure{State: status.State, Detail: "guest job ended without a verified result; its scoped journal is retained", Output: outputTail(logs.String())}
+		}
 		if status.State != "running" && status.State != "starting" && status.State != "pending" {
-			return workflow.DatasetSnapshot{}, errors.New("dataset operation failed; its scoped guest journal is retained")
+			return workflow.DatasetSnapshot{}, errors.New("dataset operation reported an unknown guest job state")
 		}
 		timer := time.NewTimer(100 * time.Millisecond)
 		select {
@@ -188,7 +231,7 @@ if digest:
 	}
 	var result outcome
 	if json.Unmarshal([]byte(logs.String()), &result) != nil || !result.OK || result.Version == "" {
-		return workflow.DatasetSnapshot{}, errors.New("dataset operation did not verify its result")
+		return workflow.DatasetSnapshot{}, &TerminalFailure{State: "completed", Detail: "job completed without a verified result", Output: outputTail(logs.String())}
 	}
 	evidence, err := p.Store.PutArtifact("dataset."+spec.ID+".verification", "application/json", []byte(logs.String()))
 	if err != nil {
@@ -207,7 +250,9 @@ if digest:
 	}
 	sum := sha256.Sum256(dump.Bytes())
 	if hex.EncodeToString(sum[:]) != result.Digest || int64(dump.Len()) != result.Size {
-		return snapshot, errors.New("dataset dump integrity check failed")
+		// The completed job's output file no longer matches its own receipt;
+		// only a new generation can produce trustworthy bytes.
+		return snapshot, &TerminalFailure{State: "completed", Detail: "dump integrity check failed"}
 	}
 	snapshot.Source, err = p.Store.PutArtifact("dataset."+spec.ID, spec.SnapshotMedia(), dump.Bytes())
 	return snapshot, err

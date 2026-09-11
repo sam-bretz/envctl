@@ -96,6 +96,10 @@ func (g Guest) Import(ctx context.Context, source Source, archive string) error 
 	script := `set -euo pipefail
 destination="$1"; pin="$2"; digest="$3"; receipt="$4"; binding="$5"
 install -d -m 700 "$(dirname "$receipt")"
+# A dead coordinator's SSH session may leave this script running; serialize
+# with any such orphan instead of racing it for the same destination.
+exec 9>"$receipt.lock"
+flock 9
 if [ -f "$receipt" ]; then
  test "$(cat "$receipt")" = "$binding"
  test "$(sudo -u envctl-agent git -C "$destination" rev-parse HEAD)" = "$pin"
@@ -148,15 +152,28 @@ func (g Guest) Assign(ctx context.Context, attempt, id, pin string) (string, err
 	script := `set -euo pipefail
 source="$1"; destination="$2"; pin="$3"; branch="$4"; receipt="$5"
 install -d -m 700 "$(dirname "$receipt")"
+exec 9>"$receipt.lock"
+flock 9
 if [ -f "$receipt" ]; then
  test "$(cat "$receipt")" = "$pin"
  test "$(sudo -u envctl-agent git -C "$destination" rev-parse --path-format=absolute --git-common-dir)" = "$source/.git"
  exit 0
 fi
 install -d -o envctl-agent -g envctl-agent -m 700 "$(dirname "$destination")"
-if [ ! -d "$destination" ]; then
- sudo -u envctl-agent env GIT_LFS_SKIP_SMUDGE=1 git -c core.hooksPath=/dev/null -C "$source" worktree add --detach "$destination" "$pin"
+# No receipt means this path was never handed to a worker. A coordinator that
+# died mid-preparation (its SSH session kills this script) can leave a partial
+# checkout or a worktree Git still locks as "initializing"; neither can pass
+# the checks below, so discard it and prepare again from the pin.
+sudo -u envctl-agent git -C "$source" worktree unlock "$destination" >/dev/null 2>&1 || true
+if [ -e "$destination" ]; then
+ sudo -u envctl-agent git -C "$source" worktree remove --force --force "$destination" >/dev/null 2>&1 || true
+ rm -rf --one-file-system -- "$destination"
 fi
+sudo -u envctl-agent git -C "$source" worktree prune
+if sudo -u envctl-agent git -C "$source" show-ref --verify --quiet "refs/heads/$branch"; then
+ sudo -u envctl-agent git -C "$source" branch -D "$branch" >/dev/null
+fi
+sudo -u envctl-agent env GIT_LFS_SKIP_SMUDGE=1 git -c core.hooksPath=/dev/null -C "$source" worktree add --detach "$destination" "$pin"
 test "$(sudo -u envctl-agent git -C "$destination" rev-parse --path-format=absolute --git-common-dir)" = "$source/.git"
 test "$(sudo -u envctl-agent git -C "$destination" rev-parse HEAD)" = "$pin"
 test -z "$(sudo -u envctl-agent git -C "$destination" status --porcelain)"
@@ -240,6 +257,8 @@ func (g Guest) RestoreBundle(ctx context.Context, id, commit string, bundle io.R
 	}
 	script := `set -euo pipefail
 cd "$1"
+exec 9>.git/envctl-restore.lock
+flock 9
 file=$(mktemp /tmp/envctl-restore.XXXXXX)
 trap 'rm -f "$file"' EXIT
 cat > "$file"

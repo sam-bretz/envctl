@@ -92,9 +92,12 @@ func TestRealParallelAgentsRetryMergeAndCoordinatorRestart(t *testing.T) {
 	start := func() {
 		engineCtx, end := context.WithCancel(ctx)
 		stop = end
-		done = make(chan error, 1)
+		// Send on this start's own channel: stopEngine clears the shared variable
+		// before waiting, and a send on nil would block both sides forever.
+		finished := make(chan error, 1)
+		done = finished
 		coordinator := &engine.Engine{Store: store, Backend: backend, Interval: 200 * time.Millisecond, OnError: func(err error) { t.Log("coordinator:", err) }}
-		go func() { done <- coordinator.Run(engineCtx) }()
+		go func() { finished <- coordinator.Run(engineCtx) }()
 	}
 	stopEngine := func() error {
 		if done == nil {

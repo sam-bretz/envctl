@@ -139,20 +139,28 @@ func (b *Backend) steer(a engine.Assignment, r *attemptRecord, role string) (boo
 	if len(pending) == 0 || r.session(role) == "" || r.generation(role) >= MaxLiveSteering {
 		return false, nil
 	}
+	generation := r.advance(a, role, steeringPrompt(role, pending))
+	for _, m := range pending {
+		r.Steering = append(r.Steering, workflow.Delivery{Message: m.ID, Role: role, Generation: generation})
+	}
+	return true, b.save(a, r)
+}
+
+// advance records the role's next generation, resuming the same explicit
+// session with prompt once the current job is stopped. Callers save it before
+// anything is interrupted.
+func (r *attemptRecord) advance(a engine.Assignment, role, prompt string) int {
 	l := r.live(role)
 	previous := r.invocation(role)
 	next := *previous
 	next.ID = fmt.Sprintf("%s_%s_%d", a.Attempt.ID, role, l.Generation+1)
 	next.Session = r.session(role)
-	next.Prompt = steeringPrompt(role, pending)
+	next.Prompt = prompt
 	l.Jobs = append(l.Jobs, previous.ID)
 	l.Interrupt = previous.ID
 	l.Generation++
 	l.Current = &next
-	for _, m := range pending {
-		r.Steering = append(r.Steering, workflow.Delivery{Message: m.ID, Role: role, Generation: l.Generation})
-	}
-	return true, b.save(a, r)
+	return l.Generation
 }
 
 // interrupt stops the superseded generation. It reports true while the old
@@ -218,7 +226,11 @@ func (b *Backend) progress(a engine.Assignment, r *attemptRecord) *workflow.Prog
 		var lines []string
 		for i, id := range r.jobs(role) {
 			if i > 0 {
-				lines = append(lines, fmt.Sprintf("resumed with user steering (resume %d)", i))
+				reason := "user steering"
+				if s := r.Stall[role]; s != nil && slices.Contains(s.Nudges, i) {
+					reason = "a coordinator stall nudge"
+				}
+				lines = append(lines, fmt.Sprintf("resumed with %s (resume %d)", reason, i))
 			}
 			lines = append(lines, b.activity(id, r.Logs[id], harness.Activity)...)
 		}
@@ -245,6 +257,12 @@ func (b *Backend) progress(a engine.Assignment, r *attemptRecord) *workflow.Prog
 		p.Activity = roleActivity(role)
 		if p.Generation >= MaxLiveSteering && len(b.pendingSteering(a, r, role)) > 0 {
 			p.Detail = fmt.Sprintf("live steering limit reached (%d resumes); further messages apply to the %s", MaxLiveSteering, map[string]string{"worker": "supervisor review", "supervisor": "next attempt"}[role])
+		}
+		if stall := b.stallDetail(a, r, role); stall != "" {
+			if p.Detail != "" {
+				p.Detail += "; "
+			}
+			p.Detail += stall
 		}
 	}
 	if len(p.Activity) > 2*workflow.ProgressActivityLines {

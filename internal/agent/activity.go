@@ -139,6 +139,18 @@ func ClaudeActivity(stream string) []string {
 	return lines
 }
 
+// CommandInFlight reports whether the latest activity is a command or tool call
+// with no later event: Codex marks unfinished commands "running:", and Claude
+// reports a tool call ("tool …") whose result arrives as a later event. A quiet
+// long command (a test suite, a build) is legitimate, not necessarily a stall.
+func CommandInFlight(lines []string) bool {
+	if len(lines) == 0 {
+		return false
+	}
+	last := lines[len(lines)-1]
+	return strings.HasPrefix(last, "running: ") || strings.HasPrefix(last, "tool ")
+}
+
 // OutputActivity summarizes plain command output, such as a verification check.
 func OutputActivity(output string, n int) []string {
 	var lines []string

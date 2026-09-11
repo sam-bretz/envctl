@@ -100,5 +100,9 @@ Version 2 workflow configurations set revision-wide limits under `limits`. A wor
 | `limits.attempt_seconds` | int | `1800` | Worker, supervisor and check timeout, unless the node or check overrides it. |
 | `workflow.nodes.<id>.limits.max_attempts` | int | inherits | 1 to 100. Applies to that node only. |
 | `workflow.nodes.<id>.limits.attempt_seconds` | int | inherits | 1 to 86400. Applies to that node's worker, supervisor and checks without their own `timeout_seconds`. |
+| `limits.stall_seconds` | int | `600` | How long a running worker or supervisor may produce no output before the coordinator intervenes. 60 to 86400. |
+| `workflow.nodes.<id>.limits.stall_seconds` | int | inherits | 60 to 86400. Overrides the stall window for that node's agents. |
 
-`envctl run show` prints each node's used and allowed attempts and its timeout. `envctl run readiness` includes the same values under `limits`.
+`envctl run show` prints each node's used and allowed attempts, its timeout and its stall window. `envctl run readiness` includes the same values under `limits`.
+
+When an agent is silent for its stall window, the coordinator first resumes the same session with a nudge asking for a status report. A nudged agent that stays silent without any activity, or a third stall in one attempt, fails the attempt with the stall evidence, and the normal retry budget applies. A command or tool call still running extends the window once, to twice its length. A step that legitimately runs quietly for longer than that, such as a long test suite or build, needs a larger `stall_seconds` on that node. A stall window at or above `attempt_seconds` leaves only the attempt timeout in effect.

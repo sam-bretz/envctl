@@ -31,6 +31,10 @@ func TestConversationShowsLiveProgressAndSteeringStatus(t *testing.T) {
 	if strings.Contains(view, "\x1b[2J") {
 		t.Fatal("activity escaped terminal sanitization")
 	}
+	rev.Attempts[0].Progress.Detail = "no agent output for 7m (intervenes at 10m); stall nudges sent: 1 of 2"
+	if view = m.View().Content; !strings.Contains(view, "stall nudges sent: 1 of 2") {
+		t.Fatal("stall watch not shown in the conversation:\n" + view)
+	}
 	rev.Attempts[0].State = "failed"
 	if view = m.View().Content; strings.Contains(view, "Live: worker") || !strings.Contains(view, "queued for the next "+node+" attempt") {
 		t.Fatal("finished attempt still shows live progress or lost the waiting message:\n" + view)

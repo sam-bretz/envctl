@@ -399,6 +399,7 @@ func printRun(cmd *cobra.Command, g *globals, r *workflow.Run) error {
 type nodeLimit struct {
 	MaxAttempts    int `json:"max_attempts"`
 	AttemptSeconds int `json:"attempt_seconds"`
+	StallSeconds   int `json:"stall_seconds"`
 	Attempts       int `json:"attempts"`
 }
 
@@ -407,7 +408,7 @@ func nodeLimits(rev *workflow.Revision) map[string]nodeLimit {
 	out := map[string]nodeLimit{}
 	for id := range rev.Config.Workflow.Nodes {
 		l := rev.Config.NodeLimits(id)
-		out[id] = nodeLimit{MaxAttempts: l.MaxAttempts, AttemptSeconds: l.AttemptSeconds}
+		out[id] = nodeLimit{MaxAttempts: l.MaxAttempts, AttemptSeconds: l.AttemptSeconds, StallSeconds: rev.Config.StallSeconds(id)}
 	}
 	for _, a := range rev.Attempts {
 		if l, ok := out[a.Node]; ok {
@@ -425,7 +426,7 @@ func printLimits(cmd *cobra.Command, rev *workflow.Revision) error {
 	limits := nodeLimits(rev)
 	for _, id := range order {
 		l := limits[id]
-		if _, err = fmt.Fprintf(cmd.OutOrStdout(), "  %-12s %d of %d attempts, %ds per attempt\n", id, l.Attempts, l.MaxAttempts, l.AttemptSeconds); err != nil {
+		if _, err = fmt.Fprintf(cmd.OutOrStdout(), "  %-12s %d of %d attempts, %ds per attempt, intervene after %ds without output\n", id, l.Attempts, l.MaxAttempts, l.AttemptSeconds, l.StallSeconds); err != nil {
 			return err
 		}
 	}

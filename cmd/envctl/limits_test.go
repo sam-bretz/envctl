@@ -23,7 +23,7 @@ func TestRunShowReportsEffectiveNodeLimits(t *testing.T) {
 	rev := run.Current()
 	rev.Attempts = append(rev.Attempts, workflow.Attempt{ID: "attempt_one", Node: "qa", State: "failed"})
 	limits := nodeLimits(rev)
-	if got := limits["qa"]; got.MaxAttempts != 2 || got.AttemptSeconds != 7200 || got.Attempts != 1 {
+	if got := limits["qa"]; got.MaxAttempts != 2 || got.AttemptSeconds != 7200 || got.Attempts != 1 || got.StallSeconds != workflow.DefaultStallSeconds {
 		t.Fatalf("qa limits: %+v", got)
 	}
 	if got := limits["code"]; got.MaxAttempts != c.Limits.MaxAttempts || got.AttemptSeconds != c.Limits.AttemptSeconds || got.Attempts != 0 {

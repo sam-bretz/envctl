@@ -84,6 +84,11 @@ Agents can read `docs/public/agent-guide.md` for a one-page summary.
 
 ## Install
 
+    brew install sam-bretz/tap/envctl
+
+This installs `envctl`, the Claude Code worktree hooks, and Lima for workflow
+VMs. Docker (OrbStack, Docker Desktop or Colima) is separate. From source:
+
     go install github.com/sam-bretz/envctl/cmd/envctl@latest
     # hooks (optional): put hooks/claude/* on PATH
 

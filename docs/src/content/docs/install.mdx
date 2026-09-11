@@ -15,17 +15,23 @@ envctl is a single Go binary. It needs Docker with the compose plugin on the mac
 
 On macOS, OrbStack is the best host: envctl detects it and reaches services by DNS instead of publishing host ports. Docker Desktop and Colima work too, with stable loopback ports from a registry.
 
-## Install from source
-
-While the repo is private, build from a checkout:
+## Install with Homebrew
 
 ```bash
-git clone git@github.com:sam-bretz/envctl.git
-cd envctl
-go install ./cmd/envctl
+brew install sam-bretz/tap/envctl
 ```
 
-`go install` puts `envctl` in `$(go env GOPATH)/bin`. Make sure that directory is on your `PATH`.
+This installs `envctl`, puts the two Claude Code worktree hooks on your `PATH`, and installs [Lima](https://lima-vm.io/) for workflow VMs. Docker is not managed by Homebrew here: install OrbStack, Docker Desktop or Colima yourself. Homebrew builds are available for macOS and Linux on Apple silicon/arm64 and Intel/amd64.
+
+Upgrade with `brew upgrade envctl`.
+
+## Install from source
+
+```bash
+go install github.com/sam-bretz/envctl/cmd/envctl@latest
+```
+
+`go install` puts `envctl` in `$(go env GOPATH)/bin`. Make sure that directory is on your `PATH`. The workflow runtime also needs Lima (`brew install lima`).
 
 Check it:
 
@@ -35,7 +41,7 @@ envctl --version
 
 ## Install the hooks
 
-The Claude Code hooks are two shell scripts in `hooks/claude/`. Put them somewhere on `PATH`:
+Homebrew already puts the hooks on your `PATH`. From source, the Claude Code hooks are two shell scripts in `hooks/claude/`. Put them somewhere on `PATH`:
 
 ```bash
 install -m 0755 hooks/claude/envctl-worktree-create hooks/claude/envctl-worktree-remove "$(go env GOPATH)/bin/"
@@ -100,7 +106,7 @@ When a job starts, envctl removes any login file an earlier envctl version copie
 
 ## Upgrade
 
-Pull and run `go install ./cmd/envctl` again. Rendered environments keep working; run `envctl up` in each worktree to re-render with the new version.
+With Homebrew, run `brew upgrade envctl`. From source, run `go install github.com/sam-bretz/envctl/cmd/envctl@latest` again. Rendered environments keep working; run `envctl up` in each worktree to re-render with the new version.
 
 ## Where next
 

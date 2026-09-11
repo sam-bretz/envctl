@@ -79,7 +79,9 @@ Claude workers need a long-lived token, not your normal Claude Code login. A cla
 
 ### Codex
 
-With no `credential`, Codex workers use `OPENAI_API_KEY` if it's set, otherwise your Codex login in `~/.codex/auth.json`. Run `codex login` first if you use a ChatGPT plan. A plan's usage limit stops running workers mid-stage, so check your remaining usage before a long run.
+Use an API key: set `OPENAI_API_KEY`, or reference one with `credential: env:NAME` or `credential: file:/absolute/path` (a JSON file containing `OPENAI_API_KEY`).
+
+With no API key, envctl falls back to your ChatGPT login in `~/.codex/auth.json` and copies it into the VMs. Avoid this. That login's refresh token rotates like Claude's, and OpenAI says [not to share one `auth.json` across machines or concurrent jobs](https://learn.chatgpt.com/docs/auth/ci-cd-auth). The first copy to refresh revokes the others, including the login on your own machine. A ChatGPT plan's usage limit also stops running workers mid-stage.
 
 ## Upgrade
 

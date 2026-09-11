@@ -113,6 +113,33 @@ type Node struct {
 	Writes       []string       `yaml:"writes,omitempty" json:"writes,omitempty"`
 	Priority     int            `yaml:"priority,omitempty" json:"priority,omitempty"`
 	Join         *JoinPolicy    `yaml:"join,omitempty" json:"join,omitempty"`
+	Limits       NodeLimits     `yaml:"limits,omitempty" json:"limits,omitzero"`
+}
+
+// NodeLimits overrides the revision-wide attempt budget for one node. Zero
+// fields inherit Config.Limits; omitted overrides keep existing digests.
+type NodeLimits struct {
+	MaxAttempts    int `yaml:"max_attempts,omitempty" json:"max_attempts,omitempty"`
+	AttemptSeconds int `yaml:"attempt_seconds,omitempty" json:"attempt_seconds,omitempty"`
+}
+
+// Upper bounds for node overrides; guest jobs refuse timeouts above one day.
+const (
+	MaxNodeAttempts       = 100
+	MaxNodeAttemptSeconds = 86400
+)
+
+// NodeLimits returns the effective limits for one node's assignments.
+func (c Config) NodeLimits(node string) Limits {
+	l := c.Limits
+	n := c.Workflow.Nodes[node]
+	if n.Limits.MaxAttempts > 0 {
+		l.MaxAttempts = n.Limits.MaxAttempts
+	}
+	if n.Limits.AttemptSeconds > 0 {
+		l.AttemptSeconds = n.Limits.AttemptSeconds
+	}
+	return l
 }
 
 // JoinPolicy names the input used to start explicit merge work. Repository
@@ -364,6 +391,9 @@ func (d Definition) Validate() error {
 		}
 		if len(n.Outputs) == 0 {
 			return fmt.Errorf("node %s needs required output artifacts", id)
+		}
+		if n.Limits.MaxAttempts < 0 || n.Limits.MaxAttempts > MaxNodeAttempts || n.Limits.AttemptSeconds < 0 || n.Limits.AttemptSeconds > MaxNodeAttemptSeconds {
+			return fmt.Errorf("node %s: limits must be positive, with at most %d attempts and %d attempt seconds", id, MaxNodeAttempts, MaxNodeAttemptSeconds)
 		}
 		unique := map[string]bool{}
 		for _, o := range n.Outputs {

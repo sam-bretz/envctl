@@ -235,6 +235,19 @@ limits:
 
 This example permits a parent and two child VMs. `vms` counts reservations, executing children, completed runtimes retained for inspection, and older draining revisions. A smaller VM limit can reduce effective parallelism. At least two VM slots are required for parallel mode. Reservation and attempt creation occur in one transaction; an unconfirmed release never frees capacity.
 
+A node can override the attempt budget for its own assignments:
+
+```yaml
+workflow:
+  nodes:
+    qa:
+      limits:
+        max_attempts: 3 # 1 to 100; omitted fields inherit limits
+        attempt_seconds: 7200 # 1 to 86400
+```
+
+`max_attempts` counts that node's attempts only. `attempt_seconds` bounds its worker, supervisor, and any check without its own `timeout_seconds`. When a node exhausts its budget, independent siblings continue, including one waiting out a retry backoff. The revision enters `needs-attention`, naming the exhausted node, only once no other work can progress. A configuration without node overrides keeps its previous digest. `envctl run show` and `envctl run readiness` report each node's effective limits and used attempts.
+
 Child attempts remain `preparing` until their own capabilities have current passing probes. A parent probe cannot authorize a child. Provisioning, readiness and reconnect operations have separate per-child locks and recovery state, so a slow branch does not stop a sibling. Both worker and supervisor execute in that child's VM. Child requests to invocation plugins include `runtime_id`; plugins that allocate external mutable resources must use this isolation namespace. Existing revision-only request identities remain unchanged in serial mode.
 
 Intermediate children are released after accepted checkpoints retain their repository/data evidence. The last live application runtimes of a completed current run remain available for inspection. Rewind gives the replacement revision fresh ownership and releases historical children after their current work drains; explicit cancellation releases completed runtimes as well. Checkpoint history remains retained. The Services and Readiness panels show the selected node's child, and `run readiness` includes child status and evidence.
@@ -243,7 +256,7 @@ Intermediate children are released after accepted checkpoints retain their repos
 
 Viewing a checkpoint does not change execution. Rewind creates a revision from a selected checkpoint and records amendments.
 
-If Code is running while the user changes Plan, the old worker continues toward its Code checkpoint with its original plan/plugins. Its result remains historical; it cannot start further stages or publish over the new revision. The amended revision restores selected inputs, revalidates readiness, and reruns affected descendants. Unrelated branches can reuse checkpoints only when complete input/capability identities match.
+If Code is running while the user changes Plan, the old worker continues toward its Code checkpoint with its original plan/plugins. Its result remains historical; it cannot start further stages or publish over the new revision. The amended revision restores selected inputs, revalidates readiness, and reruns affected descendants. Unrelated branches can reuse checkpoints only when complete input/capability identities match. In a fan-out, rewinding one branch keeps its sibling's checkpoint and reruns only that branch and the nodes that depend on it, such as the join and QA. An in-flight attempt on the rewound branch drains to a historical checkpoint that the join never consumes. Rewinding to Plan reruns every branch. Scheduler tests cover these cases with a fixture backend.
 
 Overlapping revisions use separate VMs and working branches. When capacity permits one VM, queue the new revision while the old one drains and display that state. Repeated rewinds supersede queued revisions and prevent them from starting accidentally.
 

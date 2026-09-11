@@ -344,7 +344,7 @@ func (r *Revision) ReadyNodes(now time.Time) []string {
 				}
 			}
 		}
-		if attempts >= r.Config.Limits.MaxAttempts || !retryReady {
+		if attempts >= r.Config.NodeLimits(id).MaxAttempts || !retryReady {
 			continue
 		}
 		out = append(out, id)

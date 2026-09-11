@@ -87,3 +87,18 @@ Every rendered service carries:
 ```
 
 Keys are `project/service/containerPort`. `envctl down -v` removes a project's entries. Deleting the file is safe; ports are reallocated on the next render.
+
+## Workflow limits (version 2, experimental)
+
+Version 2 workflow configurations set revision-wide limits under `limits`. A workflow node can override the attempt budget for its own assignments under `workflow.nodes.<id>.limits`. See the [workflow runtime design](/docs/design/workflow-runtime/#child-runtimes-for-parallel-execution).
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `limits.parallel` | int | `1` | Nodes that may run at once. Above `1` requires `limits.vms` of at least `2`. |
+| `limits.vms` | int | `2` | Revision and child VMs a run may hold, including draining revisions. |
+| `limits.max_attempts` | int | `12` | Attempts per node, unless the node overrides it. |
+| `limits.attempt_seconds` | int | `1800` | Worker, supervisor and check timeout, unless the node or check overrides it. |
+| `workflow.nodes.<id>.limits.max_attempts` | int | inherits | 1 to 100. Applies to that node only. |
+| `workflow.nodes.<id>.limits.attempt_seconds` | int | inherits | 1 to 86400. Applies to that node's worker, supervisor and checks without their own `timeout_seconds`. |
+
+`envctl run show` prints each node's used and allowed attempts and its timeout. `envctl run readiness` includes the same values under `limits`.

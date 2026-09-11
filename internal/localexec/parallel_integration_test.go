@@ -37,7 +37,8 @@ type parallelAcceptance struct {
 	Runtimes      map[string]workflow.RuntimeState `json:"runtimes"`
 }
 
-// Runs the production scheduler and real Codex worker/supervisor pairs. Failed
+// Runs the production scheduler and real worker/supervisor pairs (Codex unless
+// ENVCTL_PARALLEL_HARNESS and ENVCTL_PARALLEL_CREDENTIAL select another). Failed
 // or interrupted observations retain the same run, VMs and guest jobs for an
 // explicit ENVCTL_PARALLEL_RESUME; only successful acceptance tears them down.
 func TestRealParallelAgentsRetryMergeAndCoordinatorRestart(t *testing.T) {
@@ -445,7 +446,12 @@ func parallelFixture(t *testing.T, dir string) *workflow.Run {
 	fixtureGit(t, root, "init", "-q")
 	fixtureGit(t, root, "add", ".")
 	fixtureGit(t, root, "-c", "user.name=fixture", "-c", "user.email=fixture@localhost", "commit", "-qm", "parallel baseline")
-	c, err := workflow.Parse([]byte(fmt.Sprintf("version: 2\nproject: parallel\nrepositories: [{id: app, url: %q}]\nruntime: {memory_gib: 2}\nlimits: {parallel: 2, vms: 3, max_attempts: 6, attempt_seconds: 1800}\nstack: {files: [compose.yaml, fixtures/compose.yaml]}\nworkflow: {template: feature}\n", root)))
+	agents := ""
+	if kind := os.Getenv("ENVCTL_PARALLEL_HARNESS"); kind != "" {
+		h := fmt.Sprintf("{kind: %s, credential: %q}", kind, os.Getenv("ENVCTL_PARALLEL_CREDENTIAL"))
+		agents = fmt.Sprintf("agents: {worker: %s, supervisor: %s}\n", h, h)
+	}
+	c, err := workflow.Parse([]byte(fmt.Sprintf("version: 2\nproject: parallel\nrepositories: [{id: app, url: %q}]\nruntime: {memory_gib: 2}\nlimits: {parallel: 2, vms: 3, max_attempts: 6, attempt_seconds: 1800}\nstack: {files: [compose.yaml, fixtures/compose.yaml]}\nworkflow: {template: feature}\n%s", root, agents)))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -389,7 +389,17 @@ func TestPublicationRefusesUnverifiableSubmoduleAndLFSSources(t *testing.T) {
 	for needle, want := range map[string]string{"library binary": "companion", f.libCommit: "submodule vendor/lib"} {
 		i := strings.Index(string(raw), needle)
 		corrupt := slices.Clone(raw)
-		corrupt[i] ^= 1
+		if needle == f.libCommit {
+			// Stay a valid hex SHA: flipping a bit of 'a' or 'f' leaves hex and
+			// trips an earlier format check instead of the gitlink check.
+			if corrupt[i] == '0' {
+				corrupt[i] = '1'
+			} else {
+				corrupt[i] = '0'
+			}
+		} else {
+			corrupt[i] ^= 1
+		}
 		artifact, err := f.b.Store.PutArtifact("source-objects", repository.ObjectsMediaType, corrupt)
 		if err != nil {
 			t.Fatal(err)

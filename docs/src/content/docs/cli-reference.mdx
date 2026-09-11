@@ -13,6 +13,40 @@ envctl [-C PATH] [--env NAME] [--backend local] [--port-mode domains|registry] [
 
 `-C PATH` operates on the worktree containing `PATH` instead of the current directory. `--env NAME` names the environment instead of deriving it from the branch; the value is slugified. `--feature` is a deprecated alias. `--backend` accepts `local` today. `--port-mode` overrides `ports.mode` from the manifest for this invocation. `--json` switches output to JSON on every command that reports something.
 
+## Experimental workflow review
+
+Version 2 workflow state belongs to its persistent coordinator. These commands inspect retained evidence without starting a worker or requiring the run's VM:
+
+```bash
+envctl run diff <run-id> --node code
+envctl run diff <run-id> --node qa --revision <revision-id> --from <checkpoint-id> --json
+envctl run artifact <digest> --output <new-file>
+```
+
+`diff` defaults to comparing the selected checkpoint against its revision's immutable source pins. `--from` selects any recorded checkpoint in the same run, including historical revisions. The response includes source patches, checkpoint summaries, checks, approvals, and artifact/dataset identities. Repository patches are bounded to 1 MiB each and explicitly report truncation or unavailable retained source. Binary files and LFS objects are represented by Git's binary/pointer differences; database rows are not diffed. `artifact` verifies the transferred checksum and refuses to overwrite existing output.
+
+In Bubble Tea, `d` opens the comparison. `b` selects the current checkpoint as the comparison base; navigate to the target and press `d`. `B` resets the base, and Escape closes the loaded review. Selection and review never mutate the workflow.
+
+## Experimental live progress and steering
+
+```bash
+envctl run show <run-id>
+envctl run message <run-id> --node code --to worker --text "keep the public API unchanged"
+```
+
+`run show` prints each running attempt's phase (`worker`, `stack`, `checks`, `supervisor`), its current check, and its latest agent activity: messages, tool and command invocations, and check output. `--json` includes the same `progress` object on each attempt, with at most 20 lines of 300 bytes each. Activity comes from the harness's own event stream, redacted by the guest journal and again for configured credentials. It is display state only and never checkpoint evidence. Activity-only updates are written at most every few seconds; phase changes and deliveries are written at once.
+
+`run message` (and `i` in Bubble Tea) records a message against the current revision. `--node` limits it to one stage; without it, the message applies to every stage. `run show` and the Bubble Tea Conversation panel show where each message went:
+
+- **included when … started**: the message existed when the agent's prompt was frozen.
+- **delivered live … (resume N)**: the message reached a running agent.
+- **pending live delivery**: a matching attempt is running, and the message goes out on the coordinator's next poll.
+- **queued for the next … attempt**: nothing matching is running.
+
+Neither harness accepts input mid-run, so live delivery interrupts and resumes. The coordinator durably records a new generation of the agent's invocation, stops the running guest job, and resumes the same explicit harness session in the same worktree. The resumed prompt contains the new messages. Edits already made stay in place. A worker that finished before the message arrived is resumed too: its proposal is superseded and never accepted without the message. Delivery waits until the harness reports its session ID. A coordinator restart at any step reconciles from the receipt without a duplicate job.
+
+Worker-directed messages reach the running worker. The supervisor's prompt includes every message for its stage, with an instruction to reject work that ignores steering addressed to the worker. Messages that arrive while the supervisor is reviewing interrupt and resume the supervisor the same way. Each role allows 8 live resumes per attempt. After that, progress reports the limit, and further messages reach the supervisor review or the next attempt. Messages that arrive after an attempt's review has finished apply to that stage's next attempt, or to a rewind.
+
 ## Environment lifecycle
 
 ```bash
@@ -109,3 +143,28 @@ envctl agent snippet
 ## Feature names
 
 Branch names are lowercased; runs of characters outside `a-z0-9` become one `-`; leading and trailing `-` are trimmed; the result is cut to 40 characters. `feat/Imported Pricing` becomes `feat-imported-pricing`. A detached HEAD uses the worktree directory name. An empty result becomes `default`.
+
+`envctl run readiness <run>` includes `required` capability names, structured `discovered` Plan requirements (capability, affected nodes, reason), current probes, and unresolved admission items. A reviewed Plan can remain pending while one of its discovered connections is prepared; its worker result remains retained.
+
+### Local MCP interface
+
+`envctl mcp serve` serves newline-delimited MCP over stdin/stdout and connects to the same persistent coordinator as CLI/TUI. Use `--run <id>` to restrict the server to one run and disable creation, or `--read-only` to expose only inspection tools. Closing the MCP client leaves the coordinator running.
+
+Available tools are `envctl_runs`, `envctl_run`, `envctl_events`, `envctl_diff`, `envctl_artifact`, `envctl_create`, and `envctl_action`. Mutations require a caller-generated `operation_id`; actions also require the exact observed run version and revision. Reuse the identical request after a lost response. Stale mutations fail instead of silently rebasing onto current state. Agent actions cover steering, rewind, cancel, priority, and invocation plugin attachment/removal. Approval and publication remain outside this tool surface.
+
+Artifact previews require a reference from the selected run, return base64, and default to 64 KiB (maximum 1 MiB), with explicit size/truncation metadata. MCP is a local stdio interface for trusted host clients; run scoping does not create a network authentication service or expose the host coordinator inside a worker VM.
+
+Example MCP client configuration (replace the binary path and run ID):
+
+```json
+{
+  "mcpServers": {
+    "envctl": {
+      "command": "/absolute/path/to/envctl",
+      "args": ["mcp", "serve", "--run", "run_example", "--read-only"]
+    }
+  }
+}
+```
+
+The implementation pins the [official MCP Go SDK](https://github.com/modelcontextprotocol/go-sdk) at v1.7.0 and uses its [stdio server/client transport](https://go.sdk.modelcontextprotocol.io/quick_start/).

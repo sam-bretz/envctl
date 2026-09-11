@@ -1,6 +1,6 @@
 ---
 title: Install
-description: Install the envctl binary and its optional Claude Code hooks.
+description: Install the envctl binary, its optional Claude Code hooks, and agent credentials for the workflow runtime.
 ---
 
 envctl is a single Go binary. It needs Docker with the compose plugin on the machine it runs on. Nothing else runs in the background.
@@ -15,17 +15,23 @@ envctl is a single Go binary. It needs Docker with the compose plugin on the mac
 
 On macOS, OrbStack is the best host: envctl detects it and reaches services by DNS instead of publishing host ports. Docker Desktop and Colima work too, with stable loopback ports from a registry.
 
-## Install from source
-
-While the repo is private, build from a checkout:
+## Install with Homebrew
 
 ```bash
-git clone git@github.com:sam-bretz/envctl.git
-cd envctl
-go install ./cmd/envctl
+brew install sam-bretz/tap/envctl
 ```
 
-`go install` puts `envctl` in `$(go env GOPATH)/bin`. Make sure that directory is on your `PATH`.
+This installs `envctl`, puts the two Claude Code worktree hooks on your `PATH`, and installs [Lima](https://lima-vm.io/) for workflow VMs. Docker is not managed by Homebrew here: install OrbStack, Docker Desktop or Colima yourself. Homebrew builds are available for macOS and Linux on Apple silicon/arm64 and Intel/amd64.
+
+Upgrade with `brew upgrade envctl`.
+
+## Install from source
+
+```bash
+go install github.com/sam-bretz/envctl/cmd/envctl@latest
+```
+
+`go install` puts `envctl` in `$(go env GOPATH)/bin`. Make sure that directory is on your `PATH`. The workflow runtime also needs Lima (`brew install lima`).
 
 Check it:
 
@@ -35,7 +41,7 @@ envctl --version
 
 ## Install the hooks
 
-The Claude Code hooks are two shell scripts in `hooks/claude/`. Put them somewhere on `PATH`:
+Homebrew already puts the hooks on your `PATH`. From source, the Claude Code hooks are two shell scripts in `hooks/claude/`. Put them somewhere on `PATH`:
 
 ```bash
 install -m 0755 hooks/claude/envctl-worktree-create hooks/claude/envctl-worktree-remove "$(go env GOPATH)/bin/"
@@ -43,9 +49,64 @@ install -m 0755 hooks/claude/envctl-worktree-create hooks/claude/envctl-worktree
 
 Then register them in a repo. See [Agents](/docs/agents/).
 
+## Set up agent credentials (workflow runtime)
+
+The experimental workflow runtime (`envctl run`, `envctl ui`) runs worker and supervisor agents inside local VMs. It also needs [Lima](https://lima-vm.io/) 2.x (`brew install lima`). Each harness needs a credential that can be copied into those VMs safely. Do this once, before your first run.
+
+### Claude
+
+Claude workers need a long-lived token, not your normal Claude Code login. A claude.ai login carries a refresh token that rotates each time it's used. If envctl copied it into a VM, the first refresh would revoke every other copy, which can log you out of Claude Code on your own machine. envctl refuses those logins and accepts only `ANTHROPIC_API_KEY` or a token from `claude setup-token`.
+
+1. Open a normal terminal window. `claude setup-token` is interactive, so it won't work inside a Claude Code `!` command.
+2. Run `claude setup-token`, finish the browser login, and copy the `sk-ant-oat…` token it prints.
+3. In the same terminal, save the token to a private file. `read -s` keeps it off the screen and out of shell history; paste it at the prompt:
+
+   ```bash
+   mkdir -p ~/.config/envctl
+   umask 077
+   read -rs "TOKEN?Token: " && printf '{"CLAUDE_CODE_OAUTH_TOKEN":"%s"}' "$TOKEN" > ~/.config/envctl/claude-token.json && unset TOKEN
+   ```
+
+   That `read` prompt syntax is zsh. In bash, use `read -rsp "Token: " TOKEN` instead.
+
+4. Reference the file from the workflow configuration. Use an absolute path; relative paths resolve against the configuration's directory, and `~` isn't expanded.
+
+   ```yaml
+   agents:
+     worker:
+       kind: claude
+       credential: file:/Users/you/.config/envctl/claude-token.json
+     supervisor:
+       kind: claude
+       credential: file:/Users/you/.config/envctl/claude-token.json
+   ```
+
+`credential` also accepts `env:NAME` for an API key and `oauth-env:NAME` for a setup token. With no `credential`, envctl uses `ANTHROPIC_API_KEY`, then `CLAUDE_CODE_OAUTH_TOKEN`. An environment variable must be set in the environment of the envctl coordinator, which is started by whichever `envctl` command runs first. A file reference avoids depending on that.
+
+### Codex
+
+Codex workers need a long-lived credential too: a Codex access token, or an OpenAI API key. envctl refuses the ChatGPT login in `~/.codex/auth.json`. Its refresh token rotates like Claude's, and OpenAI says [not to share one `auth.json` across machines or concurrent jobs](https://learn.chatgpt.com/docs/auth/ci-cd-auth).
+
+**Codex access token** (the `claude setup-token` equivalent). [Codex access tokens](https://learn.chatgpt.com/docs/enterprise/access-tokens) are available only in ChatGPT Business and Enterprise workspaces, and a workspace owner must first allow members to use them.
+
+1. Create one at [chatgpt.com/admin/access-tokens](https://chatgpt.com/admin/access-tokens). Choose an expiry and rotate it like any automation secret.
+2. Save it the same way as the Claude token, in your own terminal:
+
+   ```bash
+   read -rs "TOKEN?Token: " && printf '{"CODEX_ACCESS_TOKEN":"%s"}' "$TOKEN" > ~/.config/envctl/codex-token.json && unset TOKEN
+   ```
+
+3. Reference it with `credential: file:/Users/you/.config/envctl/codex-token.json` on each Codex agent.
+
+**API key** (any OpenAI account). Use `credential: env:OPENAI_API_KEY`, or a `file:` reference to a JSON file containing `OPENAI_API_KEY`. Usage is billed to the API, not your ChatGPT plan.
+
+`credential` also accepts `access-env:NAME` for an access token in an environment variable. With no `credential`, envctl uses `OPENAI_API_KEY`, then `CODEX_ACCESS_TOKEN`, from the coordinator's environment.
+
+When a job starts, envctl removes any login file an earlier envctl version copied into a VM's agent home, for both Codex and Claude.
+
 ## Upgrade
 
-Pull and run `go install ./cmd/envctl` again. Rendered environments keep working; run `envctl up` in each worktree to re-render with the new version.
+With Homebrew, run `brew upgrade envctl`. From source, run `go install github.com/sam-bretz/envctl/cmd/envctl@latest` again. Rendered environments keep working; run `envctl up` in each worktree to re-render with the new version.
 
 ## Where next
 

@@ -18,6 +18,7 @@ export default defineConfig({
           { label: 'How to work with envctl', slug: 'how-to-work' },
           { label: 'Agents', slug: 'agents' },
           { label: 'Agent automation', slug: 'agent-automation' },
+          { label: 'Workflow fixtures (experimental)', slug: 'workflow-fixtures' },
           { label: 'CI', slug: 'ci' },
           { label: 'Troubleshooting', slug: 'troubleshooting' },
         ]},
@@ -28,6 +29,7 @@ export default defineConfig({
           { label: 'Roadmap', slug: 'roadmap' },
         ]},
         { label: 'Design notes', items: [
+          { label: 'Workflow runtime plan', slug: 'design/workflow-runtime' },
           { label: 'Environment identity', slug: 'design/env-identity' },
           { label: 'External dependencies', slug: 'design/external-dependencies' },
         ]},

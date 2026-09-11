@@ -32,6 +32,7 @@ type globals struct {
 	backend  string
 	portMode string
 	jsonOut  bool
+	stateDir string
 }
 
 func main() {
@@ -51,18 +52,20 @@ func root() *cobra.Command {
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		RunE:          func(cmd *cobra.Command, args []string) error { return launchTUI(cmd, g) },
 	}
 	pf := cmd.PersistentFlags()
 	pf.StringVarP(&g.dir, "dir", "C", ".", "directory inside the worktree to operate on")
 	pf.StringVar(&g.env, "env", "", "environment name (default: the git branch slug)")
 	pf.StringVar(&g.feat, "feature", "", "deprecated alias of --env")
 	_ = pf.MarkDeprecated("feature", "use --env")
-	pf.StringVar(&g.backend, "backend", "local", "backend: local (vm arrives in milestone 3)")
+	pf.StringVar(&g.backend, "backend", "local", "environment backend: local")
 	pf.StringVar(&g.portMode, "port-mode", "", "override ports.mode from the manifest: domains or registry")
 	pf.BoolVar(&g.jsonOut, "json", false, "print machine-readable JSON")
+	pf.StringVar(&g.stateDir, "state-dir", "", "workflow state directory (default: user state directory)")
 
 	cmd.AddCommand(upCmd(g), downCmd(g), stopCmd(g), startCmd(g), statusCmd(g), renderCmd(g),
-		logsCmd(g), execCmd(g), listCmd(g), initCmd(g), hookCmd(g), agentCmd(g), envCmd(g))
+		logsCmd(g), execCmd(g), listCmd(g), initCmd(g), hookCmd(g), agentCmd(g), envCmd(g), runCmd(g), daemonCmd(g), tuiCmd(g), mcpCmd(g))
 	return cmd
 }
 

@@ -1,0 +1,20 @@
+{
+  "id": "playwright",
+  "version": "1.0.0",
+  "protocol": 1,
+  "provides": ["browser.test"],
+  "requires": ["runtime.compose"],
+  "command": ["python3", "plugin.py"],
+  "operations": ["prepare", "probe", "execute", "cleanup"],
+  "platforms": ["linux/arm64", "linux/amd64"],
+  "prepare_seconds": 1800,
+  "config_schema": {
+    "type": "object",
+    "required": ["base_url"],
+    "additionalProperties": false,
+    "properties": {
+      "base_url": {"type": "string"},
+      "screenshot": {"type": "boolean"}
+    }
+  }
+}

@@ -1,44 +1,230 @@
 ---
 title: Roadmap
-description: What is built, what is next, and the design rule that holds across milestones.
+description: Implementation milestones for the Bubble Tea workflow UI, executable planning, plugins, and isolated runtimes.
 ---
 
-envctl is built in milestones that are each useful on their own. Milestone 1 is done. The order below was revised on 10 September 2026 to put environment identity and external dependencies before the VM backend, and to make agents running inside an environment a milestone of its own.
+Revised 11 September 2026 after product design alignment. This replaces the earlier environment-first sequence. The workflow engine and Plan readiness now come before remote previews and expanded automation. Bubble Tea is the selected TUI framework. Known missing dependencies are planning work; the engine must prevent admission to stages that require them.
 
-## Milestone 1: local isolation
+This is a delivery plan, not shipped functionality. The [workflow runtime plan](/docs/design/workflow-runtime/) specifies architecture, contracts, proposed configuration, and research grounding. Milestones are acceptance-based; calendar estimates follow the runtime and harness spikes.
 
-Done. Compose project per branch, domains and registry port modes, labels, env file, Claude Code worktree hooks, JSON output on every command, agent skill with `agent install`, PR validation workflow, release workflow.
+## Existing foundation: delivered
 
-## Milestone 2: identity, datasets, dependencies
+The current CLI supports local Compose lifecycle operations, rendering, status, logs, exec, ports, discovery labels, agent skills/hooks, CI validation, and releases. Named environment creation/linking/unlinking and JSON metadata are implemented. The experimental workflow backend has passed a real two-repository feature through six stages and GitHub PR output, with independent QA and coordinator restart. Invocation package attachment, guest plugin lifecycle, credential/dependency admission, renewal, and interrupted-source recovery also have targeted acceptance evidence. Complete milestone demos, dataset adapters, full rewind review, and concurrent execution remain incomplete; see `docs/implementation-progress.md` for the acceptance ledger.
 
-Three pieces that all answer "what does this environment need to function", done together because they share the same manifest and secrets plumbing.
+Keep existing commands and version 1 manifests working. Their shared-host Compose behavior remains available; new workflow execution requires a dedicated VM.
 
-**Environment identity.** An environment gets a name of its own and a linked branch as an attribute, instead of the branch being the identity. The default name is still the branch slug, so nothing changes for the common case, but an environment can now be created, linked to a different branch, unlinked, and kept. See [Environment identity](/docs/design/env-identity/).
+## Delivery sequence
 
-**Named datasets.** `envctl snapshot <name>` dumps Postgres and a manifest of LocalStack state to S3. `envctl seed <name>` restores them and keeps a golden copy so `envctl reset` is a drop and create from template. The same dataset name works locally and on a VM. Anonymised production snapshots come from a scheduled job using Greenmask.
+```text
+M1 Contracts, state, and Bubble Tea shell
+ -> M2 Dedicated local VM and repository pins
+ -> M3 Invocation plugins and executable Plan readiness
+ -> M4 Durable supervisor/worker workflow through PR output
+ -> M5 Checkpoint restoration and rewind in the TUI
+    -> M7 Local parallel DAG execution and adapter conformance
+    -> M6 Remote execution and teammate sharing (separate track)
+```
 
-**External dependencies.** A `dependencies` section in the manifest declares the external systems an environment needs, how each environment gets credentials for them, and which services receive them. Emulators such as LocalStack are the same concept with a compose file attached. See [External dependencies](/docs/design/external-dependencies/).
+Each milestone is a group of independently reviewable changes. Work packages below can become implementation issues. Later work must not rely on contracts that have not passed their exit checks.
 
-## Milestone 3: a VM per environment
+| Milestone | Reviewable demonstration |
+| --- | --- |
+| M1 | Create a run, navigate checkpoints, detach, restart the daemon, and recover the same history. |
+| M2 | Run two distinct VMs and Compose stacks from pinned multi-repository inputs; prove source and data isolation. |
+| M3 | Start with a missing QA capability, resolve it with an invocation plugin, and prove no downstream dispatch occurred before its probe passed. |
+| M4 | Complete a real feature with worker and supervisor, deterministic QA, exact-commit approval, and verified PR output. |
+| M5 | Rewind active Code to Plan; observe the old stage finish historically and the new revision continue with separate state. |
+| M6 | A teammate reviews a seeded remote preview while execution continues independently of the originating laptop. |
+| M7 | Parallel branches write independently, join through verified merges, and recover one branch without corrupting another. |
 
-A `vm` backend that runs the same compose file on one EC2 instance per environment, keyed on the environment name. Rendered files and secrets are delivered over SSM, images pull from ECR, Caddy terminates TLS with a wildcard certificate at `<env>.preview.<domain>`, and only port 443 is open. GitHub Actions creates an environment on the first push of a branch with a PR, updates every environment linked to a branch when it is pushed, and destroys environments whose branch is merged or closed.
+The first usable local release is M1-M5. Remote sharing completes the team experience in M6. Arbitrary DAG validation exists from M1; concurrent node execution follows in M7. This sequencing must not hard-code the default six stages into the scheduler.
 
-## Promote
+The numbering groups product capabilities; local M7 does not require a remote provider. The current local delivery track is **M1 → M2 → M3 → M4 → M5 → local M7**. M6 and remote adapter conformance remain a separate expansion track. Database and emulator seed/restore support belong in M3/M5, so local workflows do not depend on remote delivery for realistic test data.
 
-The first feature after milestone 3: `envctl promote` takes the environment you are looking at locally, snapshots its live data, pushes the branch, creates or updates the VM environment, and seeds it from that snapshot. One command from "works on my machine" to a URL a teammate can open.
+## Planning decisions to carry into implementation
 
-## Milestone 4: agent supervisor and worker
+Plan completion is an admission decision owned by the engine. The worker proposes the specification and downstream requirement inventory; the supervisor challenges its completeness; executable probes establish readiness. The implementation must make it impossible to accept Plan while a declared dependency has no valid binding or passing evidence.
 
-An environment becomes a place where work happens, not only where software runs. A supervisor on the VM pulls tasks and spawns workers; a worker is a Claude Code or Codex session in a worktree on the VM, using envctl's local backend there. Credentials are scoped and delivered through SSM. Every task leaves a transcript and a diff, and a person can attach to a running worker. One environment per VM stays the rule, because a worker that can run Docker can reach every container on its host.
+Use these concrete cases to review the contract before expanding adapters:
 
-## Milestone 5: sharing and hygiene
+| Case | Expected result |
+| --- | --- |
+| The planner's own harness is unavailable. | Bootstrap identifies the missing connection before launching the planner. |
+| QA needs a browser that is not installed. | Plan shows an open requirement naming QA and the required browser operation. |
+| A browser plugin is attached to this invocation. | Pin its package and configuration, resolve prerequisites, prepare it in the owning runtime, and probe it. Other invocations retain their bindings. |
+| Installation succeeds but the browser probe fails. | Plan stays incomplete; installation is not readiness evidence. |
+| Requirements contradict one another. | Record the unresolved decision in Plan; no downstream stage is admitted on an assumed answer. |
+| A verified connection expires later. | Renew or repair and recheck before dispatch. Preserve the accepted evidence and show the new recovery work. |
+| A plugin is changed while Code is active. | Revised execution receives the new binding; the existing worker keeps its original environment through its checkpoint. |
 
-oauth2-proxy in front of every environment so a URL is safe to paste to a teammate. Idle instances stop after a quiet day and start on the next push. A nightly reaper destroys environments whose branch is gone. A `workflow_dispatch` reseeds or snapshots an environment from the Actions tab.
+The TUI must expose these cases in the same focused area as the Plan artifacts, with the consuming stage, current evidence, and next resolution action visible. Reviewing an earlier checkpoint changes client selection only. Rewind is an explicit revision operation that preserves the current worker's eventual historical output.
 
-## Milestone 6: MCP and the graph
+The first implementation review should cover identities, transition predicates, the command/event API, and a navigable Bubble Tea shell. The next reviews add the isolated runtime and executable Plan contract, then connect one real feature end to end. Define calendar estimates after measuring VM startup, harness continuation, and snapshot restoration; these determine the integration cost.
 
-An MCP server exposing status, logs, exec, seed, snapshot, promote, and task submission, so an agent can inspect its own environment, hand a teammate a link, or delegate to workers inside it. Hooks for the workflow engine: provision when a node starts, snapshot when it finishes, and seed a child environment from its parent's latest snapshot by default.
+## First reviewable implementation packages
 
-## The rule that holds
+| Order | Package | Evidence required for review |
+| --- | --- | --- |
+| 1 | Audit existing contracts and connect the Bubble Tea shell to durable run state. | A run and its events survive daemon restart; viewing history cannot mutate execution. |
+| 2 | Establish the pinned two-repository VM fixture. | Two simultaneous runs have distinct Docker daemons, source, and writable data. |
+| 3 | Complete executable Plan admission and invocation attachment. | Missing browser capability leaves Plan open; attach its plugin, fail then pass a real probe, and observe downstream dispatch only after success. |
+| 4 | Complete one feature through all six checkpoints. | Real worker/supervisor output, failed-test correction, exact-commit QA/approval, and verified PR output survive reconnect. |
+| 5 | Exercise active rewind and restoration. | Old Code finishes historically; amended Plan continues in separate state; restored data and source match the chosen checkpoint. |
+| 6 | Extend the proven path to concurrent DAG branches. | Independent writers and mutable fixtures join through a verified merge; one retry cannot corrupt another branch. |
 
-The workflow engine and agents only ever call the provider interface in `internal/provider`. Docker, AWS, datasets, and dependencies sit behind it. A backend can change without anything above it noticing.
+Use the same fixture across these packages. Attach each demonstration's commands, event history, artifact identities, and failure-recovery results to the acceptance ledger. Existing code should be extended where it satisfies the contract; milestone completion requires the integrated demonstration, not just the presence of packages or passing component tests.
+
+## Implementation approach from the current workspace
+
+Preserve the existing CLI and partial workflow packages. First audit each milestone's exit checks against evidence; package existence and isolated component tests do not establish end-to-end completion.
+
+The immediate integration path is: connect daemon commands to the execution engine; provision the guest and prepare repositories/Compose; resolve invocation bindings and readiness; dispatch real worker/supervisor jobs; capture checkpoints and reconcile restart; connect review and publication. Keep this as a thin runnable path through M1-M4, then exercise the rewind and restore cases in M5. A CLI-created run remaining queued is not an acceptable substitute for that demonstration.
+
+Use one small feature fixture throughout: a seeded application with two repositories, a browser-level acceptance check, and a PR destination. Reuse it to demonstrate missing-capability resolution, failed-test correction, worker restart, and rewind. Unit and fault-injection tests prove edge cases; a real VM and real harness run prove the integrated product.
+
+Current evidence includes a real six-stage multi-repository feature, real active rewind across dedicated revision VMs, structured Plan capability discovery, prepared-resource repair, a local MCP command interface, verified source joins and two-child-VM isolation. These are integrated/component acceptance results, not blanket milestone completion. A real Claude-agent parallel fan-out/join run, a second harness (Claude) passing harness conformance, live steering and progress, host preview, stall detection, submodule/LFS publication and restore-crash recovery have since been added. The milestone-by-milestone verdict is in `docs/milestone-audit.md`; detailed commands and retained evidence are in `docs/implementation-progress.md` in the repository.
+
+## M1: Contracts, durable state, and Bubble Tea shell
+
+**Outcome:** navigate a simulated workflow in the selected UI, with a core execution model independent of LLMs and VMs.
+
+Work packages:
+
+1. Define run/revision/attempt/checkpoint IDs, artifact schemas, capability bindings, readiness reports, and transition predicates.
+2. Add versioned workflow parsing, the six-stage default template, DAG validation, and version 1 compatibility fixtures.
+3. Introduce transactional run storage, operation IDs, event history, and a daemon command/event API. Keep mutation logic outside the UI.
+4. Build the Bubble Tea shell: stage strip, in-flight runs, focused view, recipient selector, and readiness view using deterministic events.
+5. Specify the harness adapter lifecycle and perform a bounded spike for structured progress, continuation, and reconnect. Choose the first harness adapter from evidence.
+
+**Depends on:** existing Go/Cobra CLI.
+
+**Exit checks:** reject cycles, invalid transitions, and missing required artifacts; restore a run after process restart; reject stale revision mutations; navigate/resize the TUI; script commands never launch it. Unresolved downstream capabilities cannot satisfy the Plan transition even when a worker claims completion.
+
+## M2: Dedicated local VM and pinned repositories
+
+**Outcome:** two runs execute with independent Docker daemons and reproducible source inputs.
+
+Work packages:
+
+1. Spike Lima, select the initial host/guest support matrix, and measure startup/resource cost. Verify isolation before accepting the provider.
+2. Implement VM create/start/stop/inspect/destroy and bootstrap the guest runner, Docker Engine, and Compose.
+3. Resolve source refs to full SHAs, including required submodules/LFS; fetch/copy source into guest-owned storage and create revision-specific branches.
+4. Reuse Compose lifecycle inside the guest, accounting for guest paths, networks, health checks, and forwarding.
+5. Record image/toolchain versions, Compose digest, source pins, and resource ownership for cleanup/recovery.
+
+**Depends on:** M1 identities, store, operation receipts.
+
+**Exit checks:** prove separate daemon identities and data; run A cannot mutate run B or the host checkout; no host Docker socket/shared writable source mount; upstream branch movement cannot change pins; guest restart restores the stack; partial provisioning retries cannot allocate duplicate VMs. Demonstrate a two-repository fixture.
+
+## M3: Invocation plugins and executable Plan readiness
+
+**Outcome:** Plan establishes capabilities needed to finish the workflow; plugins can be attached to one invocation to resolve planning requirements.
+
+Work packages:
+
+1. Implement descriptors and a versioned executable protocol for prepare, probe, execute, renew, and cleanup.
+2. Resolve project defaults plus invocation additions into a lock with digests, capability bindings, configuration identity, and credential references.
+3. Add representative adapters: selected harness, repository/PR integration, browser/test tool, and dataset restoration. Implement one database seed/restore path and an emulator fixture.
+4. Build Plan's requirement inventory and verifier: guest-side probes, credential scope/renewal, dataset checks, and downstream publication readiness.
+5. Expose attachment and readiness through CLI/TUI. Record changes after a Plan checkpoint as a revision; active-execution application is completed in M5.
+6. Implement volatile readiness rechecks and recovery hooks before downstream dispatch.
+
+**Depends on:** M1 predicates and M2 guest execution.
+
+**Exit checks:** missing credentials, harness connections, datasets, or unresolved requirements leave Plan incomplete and dispatch no downstream worker; attachment affects only its invocation; probe failure cannot be overridden by prose; reject conflicting/transitive requirements; refresh credentials when supported; recover an unavailable service or surface readiness work before stage admission. Secrets never appear in locks, artifacts, or events.
+
+## M4: Durable supervisor/worker execution through PR output
+
+**Outcome:** a real small feature progresses through Task, Plan, Design, Code, QA, and Approved change, with review and artifacts at every checkpoint.
+
+Work packages:
+
+1. Implement supervisor/worker adapters with structured events, stage-scoped inputs, continuation, and durable session/attempt references.
+2. Implement ready-node scheduling, initially serial per revision, verification, correction, and checkpoint publication. Respect arbitrary DAG dependencies, not numeric stage order.
+3. Rehydrate sessions from artifacts/summaries; restart failed workers; enforce resource limits and no-progress recovery strategies.
+4. Capture commits and QA evidence bound to SHAs; prepare draft PRs, record final approvals, and publish idempotently through a broker.
+5. Connect Bubble Tea to real events, conversation, readiness, checkpoints, diffs, tests, service status, and preview metadata.
+
+**Depends on:** M1-M3.
+
+**Exit checks:** complete a feature with supervisor and worker in the VM; inject early worker exit and failed tests and observe continuation; reconnect after closing the TUI; recover coordinator/runner restart without duplicate checkpoint acceptance or PR creation; demonstrate multi-repository output approved against its complete commit set. Human gates are explicit and distinct from infrastructure recovery.
+
+**Release boundary:** internal alpha. Single active revision, durable checkpoints, local execution, default workflow and serial custom DAGs. Do not advertise rewind until M5 passes.
+
+## M5: Checkpoint restoration, rewind, and complete TUI review
+
+**Outcome:** revise earlier decisions while workers finish their current stage, preserving both histories.
+
+Work packages:
+
+1. Capture/restore artifacts, source, and consistent dataset snapshots or reconstruction recipes. Preserve required artifacts outside disposable VMs.
+2. Implement revision-based rewind and descendant invalidation; reuse checkpoints only when complete input/capability identities match.
+3. Drain superseded attempts to their next checkpoint, prevent stale publication, and isolate overlapping revisions in separate VMs. Queue when capacity is insufficient.
+4. Apply plugin additions/removals/upgrades through revisions; show changed capabilities and readiness work in the TUI.
+5. Complete checkpoint comparison, approval history, branch/PR metadata, graph navigation, priority ordering, narrow layouts, and explicit cancel.
+
+**Depends on:** M4 durability and M3 readiness/plugin model.
+
+**Exit checks:** rewind running Code to Plan; old work reaches its checkpoint without updating current output; new work restores inputs and revalidates readiness; plugin attachment cannot mutate the old worker; repeated rewinds cannot resurrect superseded queued revisions; recover a restore crash; changed commits invalidate QA/approval. Demonstrate two attached clients.
+
+**Release boundary:** first usable local workflow release. Demo a real feature, dedicated VM, supervisor/worker pair, plugins resolved during Plan, six stages, checkpoint review, and rewind during active work.
+
+## M6: Remote execution and teammate sharing
+
+**Outcome:** run the same contract in a remote VM independently of a developer's laptop, with authenticated preview and run access.
+
+Work packages:
+
+1. Implement EC2 as the first remote provider using the same guest contract. Keep AWS credentials, transport, images, and DNS behind adapters.
+2. Host authoritative remote coordination independently of the laptop. Add authenticated team access and local registry aggregation with one mutation authority per run.
+3. Add remote artifacts/datasets, verified seed/snapshot transport, HTTPS previews, and viewer/operator roles before team exposure.
+4. Publish local checkpoints as remote previews from pins. Add explicit ownership handoff for active continuation remotely.
+5. Add retention, idle-stop/resume, and orphan cleanup respecting execution, pending approval, retained artifacts, and kept previews.
+
+**Depends on:** M5 restoration/ownership; M2 provider contract.
+
+**Exit checks:** restore a checkpoint locally/remotely with matching source/data identities; a teammate opens the preview and inspects the run; disconnect the originating laptop and observe subsequent stages; handle concurrent reviewer mutations; interrupt promotion/handoff and prove single ownership; databases stay private; teardown preserves retained evidence.
+
+**Release boundary:** team workflow beta. Record architecture-specific image digests when CPUs differ; identical inputs do not imply byte-identical cross-architecture builds.
+
+## M7: Parallel DAG execution and extensibility
+
+**Outcome:** custom workflows fan out and join with explicit repository and application-data ownership.
+
+Work packages:
+
+1. Add concurrent ready-node scheduling, per-invocation limits, priorities, joins, and partial-branch recovery.
+2. Give parallel writers separate worktrees and explicit merge ownership. Isolate mutating test fixtures; use child runtimes when full independent stack state is required.
+3. Coordinate multiple workers through the supervisor and preserve checkpoint lineage through joins. Conflicts become verified work, not silent last-writer-wins behavior.
+4. Publish provider/plugin conformance suites; exercise another harness and a non-AWS remote adapter before claiming portability.
+5. Add agent-facing API/MCP operations over existing commands. Scope web/phone clients and a marketplace separately.
+
+**Depends on:** M5 restoration and ownership plus M1 generic DAG model for local execution. Remote provider expansion additionally depends on M6 operational evidence.
+
+**Exit checks:** parallel branches join on expected SHAs; one retry cannot corrupt another; parent changes invalidate correct descendants; capabilities/budgets apply per assignment; integration tests do not share mutable fixtures; an additional adapter passes the same lifecycle/recovery checks.
+
+Current partial evidence: explicit repository merge ownership and dataset-input policies are validated before execution; retained merge bundles are independently checked for all incoming SHAs. The parallel backend now reserves independent child runtimes, with per-child readiness/recovery and VM capacity across rewinds. Real guest conflict/replay and two-child-VM source/data/teardown isolation tests pass, and a real Claude-agent run completed fan-out, an isolated branch retry, a verified merge and QA. Per-node budgets apply. Codex has not yet run the harness conformance test Claude passed, and plugin/provider conformance suites are missing, so M7 is not closed.
+
+## Implementation rules
+
+Before beginning each milestone, record its starting evidence, remaining work packages, and exact demonstration in the acceptance ledger. Existing experimental code is input to that review; it does not change the milestone's exit criteria. Estimates should follow the local VM and harness measurements, with integration and recovery work included.
+
+Use these cross-milestone scenarios as release acceptance checks:
+
+| Scenario | Required observation | Milestones |
+| --- | --- | --- |
+| Browser capability missing during Plan | Plan displays the unresolved requirement; no dependent stage starts. Attachment alone is insufficient; a failed probe keeps it open and a successful probe enables admission. | M3-M4 |
+| Harness credentials missing at launch | Bootstrap identifies the missing connection before dispatching the planner. Once planning is possible, Plan verifies the identities and operations needed downstream. | M2-M3 |
+| Plugin attached during active work | The new binding belongs to revised execution; the existing worker retains its pinned package, configuration, and credentials through its checkpoint. | M3, M5 |
+| User inspects a completed checkpoint | The focused view changes while current execution continues. An explicit approval gate is visibly different from ordinary review. | M1, M4-M5 |
+| User rewinds Code to Plan | Old Code finishes historically; the amended revision validates readiness and restores the selected inputs in separate runtime state. | M5 |
+| Client or coordinator restarts | Committed history survives, running jobs reconcile, and retries do not duplicate accepted checkpoints or PR output. | M1, M4-M5 |
+| Two runs use the same repository and dataset seed | Their pinned inputs can match, but mutations, Docker daemons, branches, and writable data remain independent. | M2, M5 |
+| Teammate opens a remote run | Objective, branch set, remote location, and authenticated preview are visible; originating-client disconnection does not halt work. | M6 |
+
+- Complete each observable demo and failure check before marking its milestone delivered.
+- Version contracts and command schemas; design examples remain proposals until shipped.
+- Test transition validity, recovery, isolation, readiness, and publication idempotency. Agent happy-path demos are insufficient.
+- Update README, CLI/configuration references, and agent guide as behavior ships; do not label planned commands usable.
+- Pin dependency versions during implementation. Bubble Tea is decided; exact versions, first harness, and local support matrix are settled by M1/M2 spikes.
+- Keep VM provisioning, Compose, plugins, agent execution, and workflow transitions behind focused boundaries. Backend changes cannot redefine stage semantics.

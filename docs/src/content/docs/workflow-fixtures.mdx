@@ -1,0 +1,103 @@
+---
+title: Workflow fixtures and browser checks
+description: Configure the experimental local HTTP dataset adapter and bundled Playwright plugin.
+---
+
+These adapters are available in the experimental version 2 workflow backend. Their component acceptance checks use real services in a local VM. Full milestone delivery remains tracked in the [roadmap](/docs/roadmap/).
+
+## HTTP record emulator
+
+From your application repository, scaffold a new fixture directory:
+
+```sh
+envctl run fixture init fixtures/http
+```
+
+This creates a pinned Dockerfile, Python service, Compose fragment, and `seed.json`. It refuses to overwrite an existing directory. Commit these files before creating the workflow so envctl can read the seed from an immutable repository commit.
+
+Merge these fields into your complete version 2 workflow configuration. `app` must match your repository ID; `api` and `worker` must name all application services that write to the dataset. The generated Compose build context is relative to the workflow repository root.
+
+```yaml
+stack:
+  files: [compose.yaml, fixtures/http/compose.yaml]
+data:
+  quiesce: [api, worker]
+  datasets:
+    - id: external-fixture
+      adapter: http-fixture
+      service: emulator
+      seed_repository: app
+      seed_file: fixtures/http/seed.json
+      verify_key: tax-rate
+      verify_equals: '{"rate":0.2}'
+```
+
+Application containers can use `http://emulator:8080`. The generated fragment publishes no host port. The API supports `GET`, `PUT`, and `DELETE` at `/records/<key>`, and `GET /health`. Keys use letters, digits, `_`, `-`, and `.`, up to 128 characters. PUT values are JSON and limited to 1 MiB; the complete dataset is limited to 64 MiB. Current pinned seed transfer is limited to 1 MiB.
+
+`verify_equals` contains JSON, including quotes if the expected value is a JSON string. Plan seeds the records, captures them, restores the snapshot, and checks the configured record. Each checkpoint retains the complete record set and its checksum, format, service version, configuration identity, and verification evidence outside the VM.
+
+Capture and restore share a file lock with the HTTP service. Restore validates the candidate before atomically replacing the active records, including when the old state file is corrupt. Records absent from the snapshot are removed. Restore is a container-local control operation; it is not exposed through an HTTP management endpoint.
+
+When grouping this emulator with PostgreSQL, declare every application writer in `data.quiesce`. envctl stops those services during the grouped operation and restarts them afterward. Applications must finish in-flight multi-service writes on shutdown; stopping containers alone cannot repair an already partial external transaction.
+
+## Bundled Playwright checks
+
+The `builtin:playwright` package runs pinned Chromium tooling inside the workflow VM. Create a plugin reference file:
+
+```yaml
+id: playwright
+source: builtin:playwright
+version: "1.0.0"
+config:
+  base_url: http://127.0.0.1:18088
+  screenshot: true
+```
+
+The URL must be a loopback HTTP endpoint published by the application's Compose stack **inside the VM**. It is not the developer laptop's loopback address.
+
+Attach it at creation or while resolving an invocation's Plan:
+
+```sh
+envctl run create --task "Add invoice export" --plugin-file browser.yaml
+envctl run plugin add <run-id> --file browser.yaml
+envctl run readiness <run-id> --json
+```
+
+In Bubble Tea, use `p` to enter the reference-file path. The package is retained by digest. Changing an attachment creates a revision and reopens Plan; the old assignment keeps its original binding through its historical checkpoint.
+
+Declare a QA check in the workflow:
+
+```yaml
+workflow:
+  template: feature
+  nodes:
+    qa:
+      requires: [browser.test]
+      checks:
+        - name: browser-addition
+          plugin: playwright
+          timeout_seconds: 120
+          input:
+            path: /
+            steps:
+              - fill: {selector: '#left', value: '2'}
+              - fill: {selector: '#right', value: '3'}
+              - click: '#add'
+              - text: {selector: '#result', equals: '5'}
+```
+
+A check chooses either `command` or `plugin`. Plugin checks can be declared before the plugin is attached; Plan cannot complete until the required binding and probes pass. Preparation verifies Chromium can execute JavaScript; the readiness probe navigates to the configured app. QA performs the declared interactions and assertions against the stage's stack.
+
+The bundled check supports fill, click, key press, text equality, visibility, element count, and JavaScript boolean assertions. It requires at least one assertion. Results include structured evidence and, by default, a PNG screenshot when within the evidence size limit. Failed assertions fail the check. Check evidence is tied to the exact repository commit set and retained across coordinator reconnects.
+
+## Review and export evidence
+
+Use `envctl run checkpoints <run-id>` to find artifact and check-evidence digests. Export retained bytes to a new file:
+
+```sh
+envctl run artifact <digest> --output evidence.json
+```
+
+The client verifies the downloaded checksum before writing. Export is atomic, uses private file permissions, and refuses existing files or symlinks. Transfers are limited to 64 MiB. Browser evidence includes its PNG as the JSON `output.screenshot_png` base64 field.
+
+In Bubble Tea, `[` / `]` browse revisions; the History view shows checkpoint lineage. Use `,` / `.` to choose a checkpoint artifact and `o` to open it. The terminal preview keeps browser results readable by replacing the embedded image string with a label; exported evidence retains the complete image.

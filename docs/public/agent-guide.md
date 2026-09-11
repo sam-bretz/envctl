@@ -1,10 +1,32 @@
 # envctl agent guide
 
-Read this before helping someone set up or use envctl. It is the whole tool in one page.
+Read this before helping someone set up or use envctl. The local Compose commands are stable; the workflow interface below is experimental.
 
 ## What it is
 
-envctl gives each git worktree its own isolated docker-compose environment. It renders the repo's compose files into `.envctl/<feature>/compose.yaml` with a per-branch project name, no colliding host ports, and labels, then runs plain `docker compose` on that file. There is no server and no database.
+envctl gives each git worktree its own isolated docker-compose environment. The local Compose interface renders the repo's compose files into `.envctl/<feature>/compose.yaml` with a per-branch project name, no colliding host ports, and labels, then runs plain `docker compose` on that file. Those lifecycle commands do not require a daemon.
+
+## Experimental workflows
+
+Version 2 workflows use a persistent coordinator, Bubble Tea, and dedicated local VMs. Use `envctl run validate`, `envctl run create --task ...`, `envctl run readiness <run-id> --json`, and `envctl ui`. Keep existing version 1 configuration and lifecycle commands working when helping users migrate.
+
+Before a first run, each harness needs a credential for its VMs; see [Install](/docs/install/#set-up-agent-credentials-workflow-runtime). Harnesses accept only long-lived credentials, never a user's interactive login, whose rotating refresh token would revoke the host login: Claude takes `ANTHROPIC_API_KEY` or a `claude setup-token` token; Codex takes a Codex access token (ChatGPT Business/Enterprise, created at chatgpt.com/admin/access-tokens) or `OPENAI_API_KEY`. Ask the user to create the token in their own terminal or browser and save it to a private file referenced as `credential: file:/absolute/path`. Never ask for a token in chat or print it.
+
+Plan must verify downstream requirements before dependent execution. Attach a local executable package or the bundled Playwright package using `envctl run plugin add <run-id> --file browser.yaml`; attachments are frozen per invocation revision. Use `envctl run fixture init fixtures/http` to scaffold the HTTP dataset emulator, then commit the generated source and seed. PostgreSQL and HTTP fixture datasets retain checksum-verified snapshots outside the VM.
+
+In Bubble Tea, `[` / `]` browse revisions, `,` / `.` select artifacts, `o` opens them, and `p` attaches a plugin reference file. Browsing and detaching do not cancel execution. Historical views are read-only; rewind creates a new revision.
+
+Running attempts expose bounded, redacted `progress` (phase, current check, recent agent activity) in `envctl run show <run-id>` (`--json` for the full object), the Bubble Tea Conversation panel, and MCP run reads. Steer with `envctl run message <run-id> --node <stage> --to worker|supervisor --text ...` or `i` in Bubble Tea. A message reaches a running agent by interrupting its guest job and resuming the same harness session with the message; each message's status (included at start, delivered live, pending, or queued for the next attempt) is shown next to it. Live delivery waits until the harness reports its session, is limited to 8 resumes per role per attempt, and does not apply once an attempt's review has finished. Supervisors see every message for their stage and should reject work that ignores worker steering.
+
+An agent silent for its stall window (`limits.stall_seconds`, default 600, overridable per node) is nudged once to report status; a still-silent agent, or a third stall, fails the attempt with evidence and the retry budget applies. A running command extends the window once. If a legitimate step, such as a long test suite, runs quietly for longer than twice the window, raise `stall_seconds` for that node rather than treating the failure as flaky.
+
+Workflow VM services are reachable only inside the VM; agents and checks get their guest addresses as `ENVCTL_SERVICE_<NAME>_URL`, `_HOST` and `_PORT_<CONTAINER_PORT>`. To open one service from the host, the user adds `preview: {service: web, port: 8080}` to the workflow configuration; `envctl run show` then prints a `127.0.0.1` preview URL once the service answers. Lima's automatic port forwarding stays disabled; do not suggest re-enabling it or binding services to `0.0.0.0` to reach them.
+
+Use `d` to compare a checkpoint against its revision's source pins. To compare checkpoints, select the earlier one, press `b`, navigate to the target (including another revision), then press `d`. `B` resets the base; Escape closes the loaded review. The CLI equivalent is `envctl run diff <run-id> --node code [--revision <revision-id>] [--from <checkpoint-id>] [--json]`. Source comes from retained bundles, with explicit unavailable/truncated results. Comparison includes checkpoint summaries, review/approval/check evidence and artifact/dataset identities; it does not compare database rows or binary artifact contents.
+
+Use `envctl run artifact <digest> --output <new-file>` to export checksum-verified evidence. Existing files are never overwritten. Agent-created temporary reports belong in the attempt's supplied scratch directory; read-only source stages must not add untracked report directories to repositories.
+
+This workflow backend remains experimental. Full rewind, parallel execution, provider expansion, and complete database metadata replay are not all delivered. Read [the fixtures guide](/docs/workflow-fixtures/), [the roadmap](/docs/roadmap/), and `docs/implementation-progress.md` before claiming support or milestone completion.
 
 ## Setup checklist
 

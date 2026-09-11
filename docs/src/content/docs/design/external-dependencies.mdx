@@ -3,7 +3,7 @@ title: External dependencies
 description: Design note. A manifest section that declares the external systems an environment needs, how it gets credentials, and which services receive them.
 ---
 
-Status: decided 10 September 2026, to be built in milestone 2 alongside datasets, because both need the same secrets plumbing.
+Status: earlier design, 10 September 2026. The dependency categories and secret references below inform the [workflow runtime plan](/docs/design/workflow-runtime/). Its invocation plugin contract and Plan readiness requirements supersede this note's original extensibility scope. Delivery is now scheduled in [M3](/docs/roadmap/#m3-invocation-plugins-and-executable-plan-readiness). Examples below are proposed, not implemented commands.
 
 ## Problem
 
@@ -79,7 +79,7 @@ An emulator is a compose file included in the render when the dependency is enab
 
 ## Extensibility
 
-The three kinds cover the cases we know. `exec` is deliberately the only plugin mechanism at first: a script in the repository, run with the environment's JSON on stdin, printing `KEY=VALUE` lines. If a fourth pattern shows up more than twice, it becomes a kind. This keeps the manifest declarative and avoids a plugin API before there are plugins.
+The workflow design expands this scope to versioned invocation plugins with structured preparation, probing, execution, renewal, and cleanup. A plugin can be attached during Plan without changing project defaults. Dependencies must be resolved and verified for downstream stages before Plan completes. The existing external/emulator/exec categories can be implemented through that protocol; a script producing variables alone does not establish readiness. See [Plugins belong to invocations](/docs/design/workflow-runtime/#plugins-belong-to-invocations).
 
 ## Consequences for the current code
 

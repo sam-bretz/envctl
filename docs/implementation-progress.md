@@ -4,8 +4,8 @@ Objective: implement and verify roadmap M1-M5 and local portions of M7. Remote V
 
 ## Acceptance ledger
 
-- [ ] M1: versioned configuration, generic DAG, identities, transition predicates, transactional store, idempotent commands/events, Bubble Tea shell, harness compatibility spike.
-- [ ] M2: real local VM provider, dedicated Docker daemon per executing revision, guest-only source/data, repository SHA/submodule/LFS pins, Compose, recovery receipts, two-run isolation demonstration.
+- [x] M1 (audited in `docs/milestone-audit.md`): versioned configuration, generic DAG, identities, transition predicates, transactional store, idempotent commands/events, Bubble Tea shell, harness compatibility spike.
+- [x] M2 (macOS arm64 Lima support matrix; audited in `docs/milestone-audit.md`): real local VM provider, dedicated Docker daemon per executing revision, guest-only source/data, repository SHA/submodule/LFS pins, Compose, recovery receipts, two-run isolation demonstration.
 - [ ] M3: versioned invocation plugin protocol/locks, transitive resolution, prepare/probe/execute/renew/cleanup, harness/Git/browser/dataset adapters, engine-enforced Plan readiness, drift recovery, secret redaction.
 - [ ] M4: real worker/supervisor lifecycle, continuations and recovery, configurable scheduling, artifact/checkpoint verification, commit-bound QA/approval, idempotent PR broker, live TUI views, detach/restart and real feature demonstration.
 - [ ] M5: checkpoint/data restoration, rewind/invalidation/reuse, draining/fenced superseded workers, isolated overlapping revisions and capacity queue, revisioned plugin edits, full TUI review/actions, repeated-rewind and two-client checks.

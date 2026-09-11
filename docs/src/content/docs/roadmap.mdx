@@ -82,7 +82,7 @@ The immediate integration path is: connect daemon commands to the execution engi
 
 Use one small feature fixture throughout: a seeded application with two repositories, a browser-level acceptance check, and a PR destination. Reuse it to demonstrate missing-capability resolution, failed-test correction, worker restart, and rewind. Unit and fault-injection tests prove edge cases; a real VM and real harness run prove the integrated product.
 
-Current evidence includes a real six-stage multi-repository feature, real active rewind across dedicated revision VMs, structured Plan capability discovery, prepared-resource repair, a local MCP command interface, verified source joins and two-child-VM isolation. These are integrated/component acceptance results, not blanket milestone completion. A complete parallel-agent fan-out/join demonstration, a second harness, conformance and remaining restore/interaction cases are still pending. Detailed commands and retained evidence are recorded in `docs/implementation-progress.md` in the repository.
+Current evidence includes a real six-stage multi-repository feature, real active rewind across dedicated revision VMs, structured Plan capability discovery, prepared-resource repair, a local MCP command interface, verified source joins and two-child-VM isolation. These are integrated/component acceptance results, not blanket milestone completion. A real Claude-agent parallel fan-out/join run, a second harness (Claude) passing harness conformance, live steering and progress, host preview, stall detection, submodule/LFS publication and restore-crash recovery have since been added. The milestone-by-milestone verdict is in `docs/milestone-audit.md`; detailed commands and retained evidence are in `docs/implementation-progress.md` in the repository.
 
 ## M1: Contracts, durable state, and Bubble Tea shell
 
@@ -203,7 +203,7 @@ Work packages:
 
 **Exit checks:** parallel branches join on expected SHAs; one retry cannot corrupt another; parent changes invalidate correct descendants; capabilities/budgets apply per assignment; integration tests do not share mutable fixtures; an additional adapter passes the same lifecycle/recovery checks.
 
-Current partial evidence: explicit repository merge ownership and dataset-input policies are validated before execution; retained merge bundles are independently checked for all incoming SHAs. The parallel backend now reserves independent child runtimes, with per-child readiness/recovery and VM capacity across rewinds. Real guest conflict/replay and two-child-VM source/data/teardown isolation tests pass. A full real-agent fan-out/join demonstration and the remaining adapter/conformance work are still required; this evidence does not close M7.
+Current partial evidence: explicit repository merge ownership and dataset-input policies are validated before execution; retained merge bundles are independently checked for all incoming SHAs. The parallel backend now reserves independent child runtimes, with per-child readiness/recovery and VM capacity across rewinds. Real guest conflict/replay and two-child-VM source/data/teardown isolation tests pass, and a real Claude-agent run completed fan-out, an isolated branch retry, a verified merge and QA. Per-node budgets apply. Codex has not yet run the harness conformance test Claude passed, and plugin/provider conformance suites are missing, so M7 is not closed.
 
 ## Implementation rules
 

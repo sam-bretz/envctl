@@ -27,6 +27,26 @@ envctl run artifact <digest> --output <new-file>
 
 In Bubble Tea, `d` opens the comparison. `b` selects the current checkpoint as the comparison base; navigate to the target and press `d`. `B` resets the base, and Escape closes the loaded review. Selection and review never mutate the workflow.
 
+## Experimental live progress and steering
+
+```bash
+envctl run show <run-id>
+envctl run message <run-id> --node code --to worker --text "keep the public API unchanged"
+```
+
+`run show` prints each running attempt's phase (`worker`, `stack`, `checks`, `supervisor`), its current check, and its latest agent activity: messages, tool and command invocations, and check output. `--json` includes the same `progress` object on each attempt, with at most 20 lines of 300 bytes each. Activity comes from the harness's own event stream, redacted by the guest journal and again for configured credentials. It is display state only and never checkpoint evidence. Activity-only updates are written at most every few seconds; phase changes and deliveries are written at once.
+
+`run message` (and `i` in Bubble Tea) records a message against the current revision. `--node` limits it to one stage; without it, the message applies to every stage. `run show` and the Bubble Tea Conversation panel show where each message went:
+
+- **included when … started**: the message existed when the agent's prompt was frozen.
+- **delivered live … (resume N)**: the message reached a running agent.
+- **pending live delivery**: a matching attempt is running, and the message goes out on the coordinator's next poll.
+- **queued for the next … attempt**: nothing matching is running.
+
+Neither harness accepts input mid-run, so live delivery interrupts and resumes. The coordinator durably records a new generation of the agent's invocation, stops the running guest job, and resumes the same explicit harness session in the same worktree. The resumed prompt contains the new messages. Edits already made stay in place. A worker that finished before the message arrived is resumed too: its proposal is superseded and never accepted without the message. Delivery waits until the harness reports its session ID. A coordinator restart at any step reconciles from the receipt without a duplicate job.
+
+Worker-directed messages reach the running worker. The supervisor's prompt includes every message for its stage, with an instruction to reject work that ignores steering addressed to the worker. Messages that arrive while the supervisor is reviewing interrupt and resume the supervisor the same way. Each role allows 8 live resumes per attempt. After that, progress reports the limit, and further messages reach the supervisor review or the next attempt. Messages that arrive after an attempt's review has finished apply to that stage's next attempt, or to a rewind.
+
 ## Environment lifecycle
 
 ```bash

@@ -36,6 +36,7 @@ type Backend struct {
 	Store        *runstore.Store
 	Provider     vm.Provider
 	Capabilities Capabilities
+	memo         activityMemo
 }
 
 var _ engine.Backend = (*Backend)(nil)
@@ -421,7 +422,20 @@ func (b *Backend) Cancel(ctx context.Context, a engine.Assignment) error {
 		_, err = b.guest(a).Cancel(ctx, id)
 		return err
 	}
-	for _, id := range []string{a.Attempt.ID + "_worker", a.Attempt.ID + "_supervisor"} {
+	ids := []string{a.Attempt.ID + "_worker", a.Attempt.ID + "_supervisor"}
+	if r, err := b.load(a); err == nil {
+		// Live steering resumes a role in later generations; stop all of them.
+		for _, role := range []string{"worker", "supervisor"} {
+			for _, id := range r.jobs(role) {
+				if !slices.Contains(ids, id) {
+					ids = append(ids, id)
+				}
+			}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, id := range ids {
 		if err := cancel(id); err != nil {
 			return err
 		}

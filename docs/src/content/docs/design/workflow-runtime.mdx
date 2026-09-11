@@ -365,6 +365,8 @@ The current Bubble Tea review controls include `[` / `]` for revision history, `
 
 Start the shell against recorded events, then connect the real API. Full terminal emulation is outside the first release: show structured events and offer explicit terminal attachment for supported harnesses. Record steering against a revision/recipient; specification changes use revision operations.
 
+The Conversation panel now shows a running attempt's live phase, resume generation, current check and recent activity parsed from the harness's own event stream (Codex `exec --json`, Claude `stream-json`), plus each message's delivery status. Live steering is interrupt-and-resume: harnesses accept no input mid-run, so the coordinator records a new invocation generation, stops the running guest job, and resumes the same explicit session in the same worktree with the new messages. The frozen worker assignment reviewed by the supervisor does not change. Supervisors see every message for their stage. Messages arriving during review interrupt and resume the supervisor. Each role is bounded to 8 live resumes per attempt. See the [CLI reference](/docs/cli-reference/#experimental-live-progress-and-steering).
+
 ## Compatibility and scope
 
 Version 1 manifests and lifecycle commands continue to work. Workflow configuration is versioned explicitly; unknown critical fields cannot silently disappear. Bare `envctl` launches Bubble Tea only in an interactive terminal. Retain legacy environment metadata and link it to run IDs where applicable; it cannot represent full workflow history.

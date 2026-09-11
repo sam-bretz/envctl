@@ -44,8 +44,14 @@ real probes pass. Failed plugin probes can request durable resource repair;
 Chromium resource deletion and recovery have real guest acceptance evidence.
 `envctl mcp serve` exposes local agent commands with optional run scoping and
 read-only access, preserving daemon operation replay and revision checks.
-Complete database metadata replay, remaining restore cases, live steering,
-the full parallel-agent demonstration and a second harness are still incomplete.
+Running attempts now report bounded, redacted live progress (phase, current
+check, recent agent activity) to `envctl run show`, Bubble Tea and MCP. User
+messages reach a running worker or supervisor by interrupting its guest job and
+resuming the same harness session; a real Claude worker was steered mid-command
+this way. Each message shows whether it was included at start, delivered live,
+pending, or queued for the next attempt.
+Complete database metadata replay, remaining restore cases, the full
+parallel-agent demonstration and a second harness are still incomplete.
 Source joins now require declared merge ownership and checks. The coordinator
 verifies every incoming SHA against the retained output bundle; dataset joins
 select a declared predecessor. Real guest conflict/replay acceptance passes.

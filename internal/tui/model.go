@@ -535,11 +535,22 @@ func (m Model) details() string {
 				if a.Result != nil {
 					lines = append(lines, a.Result.Summary, "Supervisor: "+a.Result.Review.Summary)
 				}
+				if p := a.Progress; a.State == "running" && p != nil {
+					live := "Live: " + p.Phase
+					if p.Generation > 0 {
+						live += fmt.Sprintf(" (resume %d)", p.Generation)
+					}
+					if p.Detail != "" {
+						live += " — " + p.Detail
+					}
+					live += " · updated " + p.UpdatedAt.Local().Format("15:04:05")
+					lines = append(lines, live+"\n  "+strings.Join(p.Activity, "\n  "))
+				}
 			}
 		}
 		for _, msg := range rev.Messages {
 			if msg.Node == "" || msg.Node == node {
-				lines = append(lines, "To "+msg.Recipient+": "+msg.Body)
+				lines = append(lines, "To "+msg.Recipient+": "+msg.Body+"\n  ["+rev.MessageStatus(msg)+"]")
 			}
 		}
 		if len(lines) == 0 {

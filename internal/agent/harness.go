@@ -16,6 +16,8 @@ type Harness interface {
 	Start(context.Context, Invocation, Credential) (guestjob.Status, error)
 	Result(context.Context, string) (json.RawMessage, error)
 	Session(string) string
+	// Activity summarizes the native event stream for live progress display.
+	Activity(string) []string
 }
 
 func Select(kind string, guest guestjob.Client) (Harness, error) {

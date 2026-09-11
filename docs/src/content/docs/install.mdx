@@ -1,6 +1,6 @@
 ---
 title: Install
-description: Install the envctl binary and its optional Claude Code hooks.
+description: Install the envctl binary, its optional Claude Code hooks, and agent credentials for the workflow runtime.
 ---
 
 envctl is a single Go binary. It needs Docker with the compose plugin on the machine it runs on. Nothing else runs in the background.
@@ -42,6 +42,44 @@ install -m 0755 hooks/claude/envctl-worktree-create hooks/claude/envctl-worktree
 ```
 
 Then register them in a repo. See [Agents](/docs/agents/).
+
+## Set up agent credentials (workflow runtime)
+
+The experimental workflow runtime (`envctl run`, `envctl ui`) runs worker and supervisor agents inside local VMs. It also needs [Lima](https://lima-vm.io/) 2.x (`brew install lima`). Each harness needs a credential that can be copied into those VMs safely. Do this once, before your first run.
+
+### Claude
+
+Claude workers need a long-lived token, not your normal Claude Code login. A claude.ai login carries a refresh token that rotates each time it's used. If envctl copied it into a VM, the first refresh would revoke every other copy, which can log you out of Claude Code on your own machine. envctl refuses those logins and accepts only `ANTHROPIC_API_KEY` or a token from `claude setup-token`.
+
+1. Open a normal terminal window. `claude setup-token` is interactive, so it won't work inside a Claude Code `!` command.
+2. Run `claude setup-token`, finish the browser login, and copy the `sk-ant-oat…` token it prints.
+3. In the same terminal, save the token to a private file. `read -s` keeps it off the screen and out of shell history; paste it at the prompt:
+
+   ```bash
+   mkdir -p ~/.config/envctl
+   umask 077
+   read -rs "TOKEN?Token: " && printf '{"CLAUDE_CODE_OAUTH_TOKEN":"%s"}' "$TOKEN" > ~/.config/envctl/claude-token.json && unset TOKEN
+   ```
+
+   That `read` prompt syntax is zsh. In bash, use `read -rsp "Token: " TOKEN` instead.
+
+4. Reference the file from the workflow configuration. Use an absolute path; relative paths resolve against the configuration's directory, and `~` isn't expanded.
+
+   ```yaml
+   agents:
+     worker:
+       kind: claude
+       credential: file:/Users/you/.config/envctl/claude-token.json
+     supervisor:
+       kind: claude
+       credential: file:/Users/you/.config/envctl/claude-token.json
+   ```
+
+`credential` also accepts `env:NAME` for an API key and `oauth-env:NAME` for a setup token. With no `credential`, envctl uses `ANTHROPIC_API_KEY`, then `CLAUDE_CODE_OAUTH_TOKEN`. An environment variable must be set in the environment of the envctl coordinator, which is started by whichever `envctl` command runs first. A file reference avoids depending on that.
+
+### Codex
+
+With no `credential`, Codex workers use `OPENAI_API_KEY` if it's set, otherwise your Codex login in `~/.codex/auth.json`. Run `codex login` first if you use a ChatGPT plan. A plan's usage limit stops running workers mid-stage, so check your remaining usage before a long run.
 
 ## Upgrade
 

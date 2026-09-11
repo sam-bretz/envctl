@@ -10,6 +10,8 @@ envctl gives each git worktree its own isolated docker-compose environment. The 
 
 Version 2 workflows use a persistent coordinator, Bubble Tea, and dedicated local VMs. Use `envctl run validate`, `envctl run create --task ...`, `envctl run readiness <run-id> --json`, and `envctl ui`. Keep existing version 1 configuration and lifecycle commands working when helping users migrate.
 
+Before a first run, each harness needs a credential for its VMs; see [Install](/docs/install/#set-up-agent-credentials-workflow-runtime). Claude harnesses accept only `ANTHROPIC_API_KEY` or a `claude setup-token` token, never the user's claude.ai login, whose rotating refresh token would revoke the host login. `claude setup-token` is interactive, so ask the user to run it in their own terminal and save the token to a private file referenced as `credential: file:/absolute/path`. Never ask for the token in chat or print it.
+
 Plan must verify downstream requirements before dependent execution. Attach a local executable package or the bundled Playwright package using `envctl run plugin add <run-id> --file browser.yaml`; attachments are frozen per invocation revision. Use `envctl run fixture init fixtures/http` to scaffold the HTTP dataset emulator, then commit the generated source and seed. PostgreSQL and HTTP fixture datasets retain checksum-verified snapshots outside the VM.
 
 In Bubble Tea, `[` / `]` browse revisions, `,` / `.` select artifacts, `o` opens them, and `p` attaches a plugin reference file. Browsing and detaching do not cancel execution. Historical views are read-only; rewind creates a new revision.

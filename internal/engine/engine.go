@@ -322,6 +322,9 @@ func (e *Engine) Reconcile(ctx context.Context, id, revision string) error {
 	if rev.State == "active" || rev.State == "draining" {
 		ready := rev.ReadyNodes(e.now())
 		if len(ready) == 0 && !rev.HasActive() && len(rev.ReadinessProblems(e.now(), rev.Requirements())) == 0 {
+			// Budgets are per node. An exhausted node needs attention only once no
+			// sibling with remaining budget is still waiting out its retry backoff.
+			exhausted, count, retrying := "", 0, false
 			for node := range rev.Config.Workflow.Nodes {
 				if rev.State == "draining" && !slices.Contains(rev.DrainNodes, node) {
 					continue
@@ -329,25 +332,33 @@ func (e *Engine) Reconcile(ctx context.Context, id, revision string) error {
 				if _, done := rev.Checkpoints[node]; done {
 					continue
 				}
-				count := 0
+				attempts, backoff := 0, false
 				for _, attempt := range rev.Attempts {
 					if attempt.Node == node {
-						count++
+						attempts++
+						backoff = backoff || (attempt.State == "failed" && attempt.RetryAt.After(e.now()))
 					}
 				}
-				if count >= rev.Config.Limits.MaxAttempts {
-					if err := e.recover(ctx, id, revision, "attempt-budget", fmt.Errorf("stage %s exhausted its configured %d attempts; revise the plan or budget to continue", node, count)); err != nil {
-						return err
+				if attempts >= rev.Config.NodeLimits(node).MaxAttempts {
+					if exhausted == "" || node < exhausted {
+						exhausted, count = node, attempts
 					}
-					_, err = e.update(ctx, id, revision, "run.needs-attention", func(_ *workflow.Run, v *workflow.Revision) error {
-						if v.State != "active" && v.State != "draining" {
-							return workflow.ErrConflict
-						}
-						v.State = "needs-attention"
-						return nil
-					})
+				} else if backoff {
+					retrying = true
+				}
+			}
+			if exhausted != "" && !retrying {
+				if err := e.recover(ctx, id, revision, "attempt-budget", fmt.Errorf("stage %s exhausted its configured %d attempts; revise the plan or budget to continue", exhausted, count)); err != nil {
 					return err
 				}
+				_, err = e.update(ctx, id, revision, "run.needs-attention", func(_ *workflow.Run, v *workflow.Revision) error {
+					if v.State != "active" && v.State != "draining" {
+						return workflow.ErrConflict
+					}
+					v.State = "needs-attention"
+					return nil
+				})
+				return err
 			}
 		}
 		for _, node := range ready {

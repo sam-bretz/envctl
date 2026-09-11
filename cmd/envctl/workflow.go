@@ -228,7 +228,7 @@ func runCmd(g *globals) *cobra.Command {
 			}
 			switch kind {
 			case "readiness":
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"revision": run.CurrentRevision, "required": run.Current().Requirements(), "discovered": run.Current().DiscoveredRequirements, "probes": run.Current().Readiness, "children": run.Current().ChildRuntimes, "unresolved": run.Current().ReadinessProblems(time.Now(), run.Current().Requirements())})
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"revision": run.CurrentRevision, "required": run.Current().Requirements(), "discovered": run.Current().DiscoveredRequirements, "probes": run.Current().Readiness, "children": run.Current().ChildRuntimes, "limits": nodeLimits(run.Current()), "unresolved": run.Current().ReadinessProblems(time.Now(), run.Current().Requirements())})
 			case "checkpoints":
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(run.Current().Checkpoints)
 			}
@@ -364,6 +364,44 @@ func printRun(cmd *cobra.Command, g *globals, r *workflow.Run) error {
 	if g.jsonOut {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(r)
 	}
-	_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s  %s  %s\n  %s\n", r.ID, r.Name, r.Current().State, r.Description)
-	return err
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s  %s  %s\n  %s\n", r.ID, r.Name, r.Current().State, r.Description); err != nil {
+		return err
+	}
+	return printLimits(cmd, r.Current())
+}
+
+type nodeLimit struct {
+	MaxAttempts    int `json:"max_attempts"`
+	AttemptSeconds int `json:"attempt_seconds"`
+	Attempts       int `json:"attempts"`
+}
+
+// nodeLimits reports each node's effective budget and the attempts it used.
+func nodeLimits(rev *workflow.Revision) map[string]nodeLimit {
+	out := map[string]nodeLimit{}
+	for id := range rev.Config.Workflow.Nodes {
+		l := rev.Config.NodeLimits(id)
+		out[id] = nodeLimit{MaxAttempts: l.MaxAttempts, AttemptSeconds: l.AttemptSeconds}
+	}
+	for _, a := range rev.Attempts {
+		if l, ok := out[a.Node]; ok {
+			l.Attempts++
+			out[a.Node] = l
+		}
+	}
+	return out
+}
+func printLimits(cmd *cobra.Command, rev *workflow.Revision) error {
+	order, err := rev.Config.Workflow.Order()
+	if err != nil {
+		return err
+	}
+	limits := nodeLimits(rev)
+	for _, id := range order {
+		l := limits[id]
+		if _, err = fmt.Fprintf(cmd.OutOrStdout(), "  %-12s %d of %d attempts, %ds per attempt\n", id, l.Attempts, l.MaxAttempts, l.AttemptSeconds); err != nil {
+			return err
+		}
+	}
+	return nil
 }

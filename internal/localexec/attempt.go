@@ -232,7 +232,7 @@ func (b *Backend) Start(ctx context.Context, a engine.Assignment) error {
 	}
 	r := &attemptRecord{Binding: attemptBinding(a), Phase: "worker", Directories: dirs, Cursors: map[string]int64{}, Logs: map[string]string{}, Result: workflow.Result{Commits: map[string]string{}, Sources: map[string]workflow.Artifact{}, SourceObjects: map[string]workflow.Artifact{}}}
 	r.RecoveredFrom = recoveredFrom
-	r.Worker = agent.Invocation{ID: a.Attempt.ID + "_worker", Role: "worker", Directory: root, Prompt: prompt, Schema: agent.ProposalSchema(node), Model: a.Revision.Config.Agents.Worker.Model, TimeoutSeconds: a.Revision.Config.Limits.AttemptSeconds}
+	r.Worker = agent.Invocation{ID: a.Attempt.ID + "_worker", Role: "worker", Directory: root, Prompt: prompt, Schema: agent.ProposalSchema(node), Model: a.Revision.Config.Agents.Worker.Model, TimeoutSeconds: a.Revision.Config.NodeLimits(a.Attempt.Node).AttemptSeconds}
 	r.Worker.Session = resume
 	if node.Kind != "task" && node.Kind != "plan" {
 		p, err := b.stack(a).Prepare(ctx, stackSpec(a, a.Attempt.ID+"_before", dirs))
@@ -584,7 +584,7 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 				}
 				timeout := check.TimeoutSeconds
 				if timeout < 1 {
-					timeout = a.Revision.Config.Limits.AttemptSeconds
+					timeout = a.Revision.Config.NodeLimits(a.Attempt.Node).AttemptSeconds
 				}
 				_, err = b.guest(a).Submit(ctx, guestjob.Request{ID: id, Args: check.Command, Dir: dir, Env: map[string]string{"PYTHONDONTWRITEBYTECODE": "1"}, Secrets: secrets(a), TimeoutSeconds: timeout})
 				if err != nil {
@@ -632,7 +632,7 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 			}
 		}
 		prompt += "\nYour role is the independent supervisor, not the worker described above. Review alignment with the task, accepted plan and design, actual source, and test evidence. Do not modify files or repeat the implementation. Reject incomplete work with a specific correction. Do not reject Task or Plan for known readiness items that the coordinator is still resolving: assess artifact completeness and report required capabilities. The coordinator separately enforces executable readiness. Return only your structured assessment."
-		r.Supervisor = &agent.Invocation{ID: a.Attempt.ID + "_supervisor", Role: "supervisor", Directory: r.Worker.Directory, Prompt: prompt, Schema: agent.AssessmentSchema(), Model: a.Revision.Config.Agents.Supervisor.Model, TimeoutSeconds: a.Revision.Config.Limits.AttemptSeconds}
+		r.Supervisor = &agent.Invocation{ID: a.Attempt.ID + "_supervisor", Role: "supervisor", Directory: r.Worker.Directory, Prompt: prompt, Schema: agent.AssessmentSchema(), Model: a.Revision.Config.Agents.Supervisor.Model, TimeoutSeconds: a.Revision.Config.NodeLimits(a.Attempt.Node).AttemptSeconds}
 		r.Phase = "supervisor"
 		if err = b.save(a, r); err != nil {
 			return engine.Observation{}, err

@@ -79,9 +79,24 @@ Claude workers need a long-lived token, not your normal Claude Code login. A cla
 
 ### Codex
 
-Use an API key: set `OPENAI_API_KEY`, or reference one with `credential: env:NAME` or `credential: file:/absolute/path` (a JSON file containing `OPENAI_API_KEY`).
+Codex workers need a long-lived credential too: a Codex access token, or an OpenAI API key. envctl refuses the ChatGPT login in `~/.codex/auth.json`. Its refresh token rotates like Claude's, and OpenAI says [not to share one `auth.json` across machines or concurrent jobs](https://learn.chatgpt.com/docs/auth/ci-cd-auth).
 
-With no API key, envctl falls back to your ChatGPT login in `~/.codex/auth.json` and copies it into the VMs. Avoid this. That login's refresh token rotates like Claude's, and OpenAI says [not to share one `auth.json` across machines or concurrent jobs](https://learn.chatgpt.com/docs/auth/ci-cd-auth). The first copy to refresh revokes the others, including the login on your own machine. A ChatGPT plan's usage limit also stops running workers mid-stage.
+**Codex access token** (the `claude setup-token` equivalent). [Codex access tokens](https://learn.chatgpt.com/docs/enterprise/access-tokens) are available only in ChatGPT Business and Enterprise workspaces, and a workspace owner must first allow members to use them.
+
+1. Create one at [chatgpt.com/admin/access-tokens](https://chatgpt.com/admin/access-tokens). Choose an expiry and rotate it like any automation secret.
+2. Save it the same way as the Claude token, in your own terminal:
+
+   ```bash
+   read -rs "TOKEN?Token: " && printf '{"CODEX_ACCESS_TOKEN":"%s"}' "$TOKEN" > ~/.config/envctl/codex-token.json && unset TOKEN
+   ```
+
+3. Reference it with `credential: file:/Users/you/.config/envctl/codex-token.json` on each Codex agent.
+
+**API key** (any OpenAI account). Use `credential: env:OPENAI_API_KEY`, or a `file:` reference to a JSON file containing `OPENAI_API_KEY`. Usage is billed to the API, not your ChatGPT plan.
+
+`credential` also accepts `access-env:NAME` for an access token in an environment variable. With no `credential`, envctl uses `OPENAI_API_KEY`, then `CODEX_ACCESS_TOKEN`, from the coordinator's environment.
+
+When a job starts, envctl removes any login file an earlier envctl version copied into a VM's agent home, for both Codex and Claude.
 
 ## Upgrade
 

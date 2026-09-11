@@ -33,7 +33,7 @@ func TestClaudeCredentialRejectsRefreshableLoginSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	c, err := ClaudeCredential(dir, "file:token.json")
-	if err != nil || c.OAuthToken != "private-long-lived" || len(c.AuthJSON) != 0 || !slices.Equal(c.Secrets, []string{"private-long-lived"}) {
+	if err != nil || c.OAuthToken != "private-long-lived" || !slices.Equal(c.Secrets, []string{"private-long-lived"}) {
 		t.Fatal("long-lived token file was not resolved as a scoped secret", err)
 	}
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "private-env-token")

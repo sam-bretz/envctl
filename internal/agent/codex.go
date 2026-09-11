@@ -32,34 +32,42 @@ var safeID = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,100}$`)
 var sessionID = regexp.MustCompile(`^[a-f0-9-]{36}$`)
 
 type Credential struct {
-	AuthJSON   []byte
-	APIKey     string
-	OAuthToken string
-	Secrets    []string
+	APIKey      string
+	OAuthToken  string // Claude: long-lived `claude setup-token` token
+	AccessToken string // Codex: long-lived Codex access token
+	Secrets     []string
 }
 
-// CodexCredential resolves one explicit reference, or the standard local Codex
-// connection. Secret values are never serialized into run configuration.
+const codexCredentialHelp = "set CODEX_ACCESS_TOKEN to a Codex access token, or OPENAI_API_KEY to an API key"
+
+// CodexCredential accepts only non-rotating credentials: a Codex access token
+// or an OpenAI API key. A ChatGPT login (~/.codex/auth.json with tokens)
+// carries a refresh token that rotates on use; copies in guests would revoke
+// each other and the host's own login. Secret values are never serialized
+// into run configuration.
 func CodexCredential(root, reference string) (Credential, error) {
 	if reference == "" {
-		if value := os.Getenv("OPENAI_API_KEY"); value != "" {
-			return Credential{APIKey: value, Secrets: []string{value}}, nil
+		if os.Getenv("OPENAI_API_KEY") != "" {
+			reference = "env:OPENAI_API_KEY"
+		} else if os.Getenv("CODEX_ACCESS_TOKEN") != "" {
+			reference = "access-env:CODEX_ACCESS_TOKEN"
+		} else {
+			return Credential{}, errors.New("Codex connection is not ready: " + codexCredentialHelp)
 		}
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return Credential{}, err
-		}
-		reference = "file:" + filepath.Join(home, ".codex", "auth.json")
 	}
-	if strings.HasPrefix(reference, "env:") {
-		value := os.Getenv(strings.TrimPrefix(reference, "env:"))
+	if strings.HasPrefix(reference, "env:") || strings.HasPrefix(reference, "access-env:") {
+		kind, name, _ := strings.Cut(reference, ":")
+		value := os.Getenv(name)
 		if value == "" {
 			return Credential{}, errors.New("Codex credential environment reference is unavailable")
+		}
+		if kind == "access-env" {
+			return Credential{AccessToken: value, Secrets: []string{value}}, nil
 		}
 		return Credential{APIKey: value, Secrets: []string{value}}, nil
 	}
 	if !strings.HasPrefix(reference, "file:") {
-		return Credential{}, errors.New("Codex credentials require an env: or file: reference")
+		return Credential{}, errors.New("Codex credentials require env:, access-env:, or file: references; " + codexCredentialHelp)
 	}
 	filename := strings.TrimPrefix(reference, "file:")
 	if !filepath.IsAbs(filename) {
@@ -67,27 +75,29 @@ func CodexCredential(root, reference string) (Credential, error) {
 	}
 	raw, err := os.ReadFile(filename)
 	if err != nil {
-		return Credential{}, errors.New("Codex auth-file reference is unavailable")
+		return Credential{}, errors.New("Codex credential file reference is unavailable")
 	}
-	var doc map[string]any
+	var doc struct {
+		APIKey      string          `json:"OPENAI_API_KEY"`
+		AccessToken string          `json:"CODEX_ACCESS_TOKEN"`
+		Tokens      json.RawMessage `json:"tokens"`
+	}
 	if len(raw) > 1<<20 || json.Unmarshal(raw, &doc) != nil {
-		return Credential{}, errors.New("Codex auth file must contain a valid credential object")
+		return Credential{}, errors.New("Codex credential file must contain a valid credential object")
 	}
-	credential := Credential{AuthJSON: raw}
-	if key, ok := doc["OPENAI_API_KEY"].(string); ok && key != "" {
-		credential.Secrets = append(credential.Secrets, key)
+	if len(doc.Tokens) > 0 && string(doc.Tokens) != "null" {
+		return Credential{}, errors.New("Codex credential file is a refreshable ChatGPT login, which cannot be shared with guests; " + codexCredentialHelp)
 	}
-	if tokens, ok := doc["tokens"].(map[string]any); ok {
-		for _, name := range []string{"access_token", "refresh_token", "id_token"} {
-			if token, ok := tokens[name].(string); ok && token != "" {
-				credential.Secrets = append(credential.Secrets, token)
-			}
+	c := Credential{APIKey: doc.APIKey, AccessToken: doc.AccessToken}
+	for _, value := range []string{doc.APIKey, doc.AccessToken} {
+		if value != "" {
+			c.Secrets = append(c.Secrets, value)
 		}
 	}
-	if len(credential.Secrets) == 0 {
-		return Credential{}, errors.New("Codex auth file contains no supported credentials")
+	if c.APIKey == "" && c.AccessToken == "" {
+		return Credential{}, errors.New("Codex credential file contains no supported credentials; " + codexCredentialHelp)
 	}
-	return credential, nil
+	return c, nil
 }
 
 type Invocation struct {
@@ -217,6 +227,9 @@ func (c Codex) Request(i Invocation, credential Credential) (guestjob.Request, e
 	if credential.APIKey != "" {
 		env["CODEX_API_KEY"] = credential.APIKey
 	}
+	if credential.AccessToken != "" {
+		env["CODEX_ACCESS_TOKEN"] = credential.AccessToken
+	}
 	return guestjob.Request{ID: i.ID, Args: args, Dir: i.Directory, Env: withEnv(env, i), Input: i.Prompt, Secrets: credential.Secrets, TimeoutSeconds: i.TimeoutSeconds}, nil
 }
 
@@ -225,8 +238,8 @@ func (c Codex) Start(ctx context.Context, i Invocation, credential Credential) (
 	if err != nil {
 		return guestjob.Status{}, err
 	}
-	if len(credential.AuthJSON) == 0 && credential.APIKey == "" {
-		return guestjob.Status{}, errors.New("Codex connection is not ready: credential reference required")
+	if credential.APIKey == "" && credential.AccessToken == "" {
+		return guestjob.Status{}, errors.New("Codex connection is not ready: " + codexCredentialHelp)
 	}
 	schema, err := json.Marshal(i.Schema)
 	if err != nil {
@@ -235,18 +248,24 @@ func (c Codex) Start(ctx context.Context, i Invocation, credential Credential) (
 	if err = c.writePrivate(ctx, invocationDir(i.ID)+"/schema.json", schema, true); err != nil {
 		return guestjob.Status{}, err
 	}
-	if len(credential.AuthJSON) > 0 {
-		// Existing guest auth may contain refreshed credentials: do not roll it
-		// back on reconnect. Explicit renewal uses a separate lifecycle action.
-		if err = c.writePrivate(ctx, codexHome(i.Role)+"/auth.json", credential.AuthJSON, false); err != nil {
-			return guestjob.Status{}, err
-		}
-	} else {
-		if err = c.Guest.Provider.Exec(ctx, c.Guest.Runtime, vm.Command{Args: []string{"sudo", "install", "-d", "-o", "envctl-agent", "-g", "envctl-agent", "-m", "700", codexHome(i.Role)}}); err != nil {
-			return guestjob.Status{}, errors.New("prepare guest harness home failed")
-		}
+	// Credentials travel only in the job environment. Remove any login file an
+	// earlier envctl version copied into the role home, so no refreshable
+	// session outlives this change or competes with the configured token.
+	if err = prepareHome(ctx, c.Guest, codexHome(i.Role), "auth.json"); err != nil {
+		return guestjob.Status{}, err
 	}
 	return c.Guest.Submit(ctx, req)
+}
+
+// prepareHome creates a private role home and removes a stale copied login.
+func prepareHome(ctx context.Context, guest guestjob.Client, home, login string) error {
+	if err := guest.Provider.Exec(ctx, guest.Runtime, vm.Command{Args: []string{"sudo", "install", "-d", "-o", "envctl-agent", "-g", "envctl-agent", "-m", "700", home}}); err != nil {
+		return errors.New("prepare guest harness home failed")
+	}
+	if err := guest.Provider.Exec(ctx, guest.Runtime, vm.Command{Args: []string{"sudo", "rm", "-f", "--", home + "/" + login}}); err != nil {
+		return errors.New("prepare guest harness home failed")
+	}
+	return nil
 }
 
 func (c Codex) writePrivate(ctx context.Context, filename string, data []byte, requireSame bool) error {

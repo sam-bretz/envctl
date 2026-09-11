@@ -144,6 +144,9 @@ func (c Claude) Start(ctx context.Context, i Invocation, credential Credential) 
 	if err = writePrivate(ctx, c.Guest, invocationDir(i.ID)+"/schema.json", schema, true); err != nil {
 		return guestjob.Status{}, err
 	}
+	if err = prepareHome(ctx, c.Guest, claudeHome(i.Role), ".credentials.json"); err != nil {
+		return guestjob.Status{}, err
+	}
 	if err = writePrivate(ctx, c.Guest, claudeHome(i.Role)+"/.claude.json", []byte(`{"hasCompletedOnboarding":true}`), false); err != nil {
 		return guestjob.Status{}, err
 	}

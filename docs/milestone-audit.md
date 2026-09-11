@@ -10,7 +10,7 @@ Evidence labels: **real** is a real VM and/or real agent run; **guest** is a com
 | --- | --- | --- |
 | M1 Contracts, state, TUI shell | 6 of 6 met | **Deliverable** |
 | M2 Dedicated VM, pinned repositories | 7 of 7 met | **Deliverable** for the macOS arm64 support matrix |
-| M3 Plugins, executable Plan readiness | 7 of 7 met | **Deliverable once the Codex credential policy is decided** (see M3) |
+| M3 Plugins, executable Plan readiness | 7 of 7 met | **Deliverable** |
 | M4 Execution through PR | 5 of 6 met | **Not yet**: a real model resuming after an injected early worker exit |
 | M5 Restoration, rewind, review | 7 of 7 met | **Deliverable with a documented gap**: multi-dataset snapshot consistency (work package 1) |
 | M7 local Parallel DAGs | 5 of 6 met | **Not yet**: Codex must pass the same harness conformance test (quota resets Sep 17); plugin/provider conformance suites |
@@ -52,7 +52,7 @@ Limitation: toolchain and image replay across providers or architectures is not 
 | Recover an unavailable service before admission | Met | real: resource repair, Chromium repair |
 | Secrets never in locks, artifacts, events | Met | fixture redaction tests; token absent from guest output (pass 18) |
 
-**Blocking decision.** Claude now refuses refreshable login sessions. Codex still copies a ChatGPT `auth.json` (rotating refresh token) into each guest role home, which OpenAI's CI guidance forbids and which can revoke the user's host login. Either restrict Codex to API keys or accept the hazard explicitly. PostgreSQL restore omits roles, ownership and ACLs (documented).
+**Credential policy (decided).** Both harnesses accept only long-lived credentials: Claude takes `ANTHROPIC_API_KEY` or a `claude setup-token` token; Codex takes a Codex access token or `OPENAI_API_KEY`. Refreshable logins are refused, and job start removes any login file an earlier version copied into a guest role home. Codex access tokens require a ChatGPT Business or Enterprise workspace. PostgreSQL restore omits roles, ownership and ACLs (documented).
 
 ## M4: Durable supervisor/worker execution through PR output
 
@@ -96,10 +96,9 @@ Open work package gap: plugin and provider conformance suites.
 
 ## Remaining before full local delivery
 
-1. Decide the Codex credential policy (M3).
-2. Real early-exit continuation: kill a real worker mid-attempt and observe the next attempt resume its session from captured source (M4).
-3. Run `TestRealHarnessConformance` for Codex after the quota resets (M7).
-4. Plugin/provider conformance suites (M7 work package 4).
-5. Multi-dataset snapshot consistency; PostgreSQL roles/ownership/ACLs (M5 work package 1, documented limits).
-6. Optional, outward-facing: one real GitHub run of LFS/submodule publication (creates LFS objects that cannot be deleted from the repository).
-7. Delivery hygiene: destroy `envctl-agent-acceptance` and the leftover `envctl-rev-*` VMs.
+1. Real early-exit continuation: kill a real worker mid-attempt and observe the next attempt resume its session from captured source (M4).
+2. Run `TestRealHarnessConformance` for Codex after the quota resets, using a Codex access token or API key (M7).
+3. Plugin/provider conformance suites (M7 work package 4).
+4. Multi-dataset snapshot consistency; PostgreSQL roles/ownership/ACLs (M5 work package 1, documented limits).
+5. Optional, outward-facing: one real GitHub run of LFS/submodule publication (creates LFS objects that cannot be deleted from the repository).
+6. Delivery hygiene: destroy `envctl-agent-acceptance` (the leftover `envctl-rev-*` VMs were deleted).

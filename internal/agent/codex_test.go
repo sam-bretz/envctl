@@ -55,9 +55,31 @@ func TestCredentialsAreReferencesAndErrorsContainNoValues(t *testing.T) {
 	if err = os.WriteFile(filepath.Join(d, "auth.json"), []byte(`{"tokens":{"access_token":"access-secret","refresh_token":"refresh-secret","id_token":"id-secret"}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	c, err = CodexCredential(d, "file:auth.json")
-	if err != nil || len(c.Secrets) != 3 {
-		t.Fatal("auth redaction inventory incomplete", err)
+	if _, err = CodexCredential(d, "file:auth.json"); err == nil || !strings.Contains(err.Error(), "refreshable") || strings.Contains(err.Error(), "-secret") {
+		t.Fatal("refreshable ChatGPT login accepted or leaked", err)
+	}
+	if err = os.WriteFile(filepath.Join(d, "token.json"), []byte(`{"CODEX_ACCESS_TOKEN":"access-token-secret"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if c, err = CodexCredential(d, "file:token.json"); err != nil || c.AccessToken != "access-token-secret" || c.APIKey != "" || len(c.Secrets) != 1 {
+		t.Fatal("access token file not resolved as a scoped secret", err)
+	}
+	t.Setenv("ENVCTL_TEST_ACCESS", "env-access-secret")
+	if c, err = CodexCredential("", "access-env:ENVCTL_TEST_ACCESS"); err != nil || c.AccessToken != "env-access-secret" {
+		t.Fatal("access-env reference not resolved", err)
+	}
+	req, err := (Codex{}).Request(Invocation{ID: "attempt_one", Role: "worker", Directory: "/work/envctl/repos/app", Prompt: "p", Schema: simpleSchema(), TimeoutSeconds: 60}, c)
+	if err != nil || req.Env["CODEX_ACCESS_TOKEN"] != "env-access-secret" || req.Env["CODEX_API_KEY"] != "" || strings.Contains(strings.Join(req.Args, " "), "env-access-secret") {
+		t.Fatal("access token escaped the scoped job environment", err)
+	}
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("CODEX_ACCESS_TOKEN", "")
+	if _, err = CodexCredential("", ""); err == nil || !strings.Contains(err.Error(), "CODEX_ACCESS_TOKEN") {
+		t.Fatal("default fell back to a login instead of explaining token setup", err)
+	}
+	t.Setenv("CODEX_ACCESS_TOKEN", "default-access")
+	if c, err = CodexCredential("", ""); err != nil || c.AccessToken != "default-access" {
+		t.Fatal("default did not select CODEX_ACCESS_TOKEN", err)
 	}
 }
 func TestSessionIsExtractedFromStructuredIdentityOnly(t *testing.T) {

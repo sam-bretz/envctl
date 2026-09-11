@@ -1,0 +1,19 @@
+services:
+  api:
+    build: .
+    ports: ['18088:8080']
+    healthcheck:
+      test: [CMD, python3, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 1s
+      timeout: 2s
+      retries: 20
+  db:
+    image: postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    environment: {POSTGRES_HOST_AUTH_METHOD: trust}
+    volumes: [billing-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD, pg_isready, -U, postgres]
+      interval: 1s
+      timeout: 1s
+      retries: 30
+volumes: {billing-data: {}}

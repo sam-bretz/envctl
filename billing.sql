@@ -1,0 +1,1 @@
+CREATE TABLE invoices(id integer primary key, amount integer); INSERT INTO invoices VALUES (1,10),(2,20);

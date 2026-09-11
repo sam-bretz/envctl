@@ -1,0 +1,10 @@
+services:
+  emulator:
+    build: "fixtures"
+    volumes: [emulator-data:/data]
+    healthcheck:
+      test: [CMD, python3, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 1s
+      timeout: 1s
+      retries: 20
+volumes: {emulator-data: {}}

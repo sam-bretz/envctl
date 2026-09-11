@@ -32,6 +32,10 @@ type Observation struct {
 	Result  *workflow.Result
 	Detail  string // already redacted by the backend
 	Session string // explicit harness session identity for durable continuation
+	// Progress and Delivered are display state for running attempts. Delivered
+	// lists user messages already submitted to an agent invocation.
+	Progress  *workflow.Progress
+	Delivered []workflow.Delivery
 }
 
 // All backend effects must be idempotent by revision/attempt ID. Poll must
@@ -69,9 +73,12 @@ type Engine struct {
 	Interval time.Duration
 	Now      func() time.Time
 	OnError  func(error)
-	mu       sync.Mutex
-	busy     map[string]bool
-	wg       sync.WaitGroup
+	// ProgressInterval bounds how often activity-only progress is persisted
+	// per attempt. Phase changes and message deliveries are written at once.
+	ProgressInterval time.Duration
+	mu               sync.Mutex
+	busy             map[string]bool
+	wg               sync.WaitGroup
 }
 
 func (e *Engine) now() time.Time {

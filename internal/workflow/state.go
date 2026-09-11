@@ -126,7 +126,32 @@ type Attempt struct {
 	Result    *Result           `json:"result,omitempty"`
 	Approval  *Approval         `json:"approval,omitempty"`
 	RetryAt   time.Time         `json:"retry_at,omitempty"`
+	Progress  *Progress         `json:"progress,omitempty"`
+	Steering  []Delivery        `json:"steering,omitempty"`
 }
+
+// Progress is a bounded, redacted observation of a running attempt. It is
+// display state only: it never participates in checkpoint admission.
+type Progress struct {
+	Phase      string    `json:"phase"`
+	Detail     string    `json:"detail,omitempty"`
+	Generation int       `json:"generation,omitempty"`
+	Activity   []string  `json:"activity,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// Delivery records a user message reaching an agent invocation. Generation 0
+// is the attempt's frozen prompt; later generations resumed the same session.
+type Delivery struct {
+	Message    string    `json:"message"`
+	Role       string    `json:"role"`
+	Generation int       `json:"generation"`
+	At         time.Time `json:"at"`
+}
+
+const ProgressActivityLines = 20
+const ProgressLineBytes = 300
+
 type Artifact struct {
 	Name      string `json:"name"`
 	Digest    string `json:"digest"`

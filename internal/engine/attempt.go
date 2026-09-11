@@ -3,9 +3,71 @@ package engine
 import (
 	"context"
 	"errors"
+	"slices"
+	"time"
 
 	"github.com/sam-bretz/envctl/internal/workflow"
 )
+
+func (e *Engine) progressInterval() time.Duration {
+	if e.ProgressInterval > 0 {
+		return e.ProgressInterval
+	}
+	return 3 * time.Second
+}
+
+// observe records live display state before the observation's state is acted
+// on. Deliveries are durable immediately so the UI can show that steering
+// reached the agent; activity-only progress is throttled so the event log
+// grows with phases and deliveries, not with every harness event.
+func (e *Engine) observe(ctx context.Context, runID, revision string, a *workflow.Attempt, o Observation) (bool, error) {
+	same := func(x workflow.Delivery) func(workflow.Delivery) bool {
+		return func(y workflow.Delivery) bool {
+			return x.Message == y.Message && x.Role == y.Role && x.Generation == y.Generation
+		}
+	}
+	var deliveries []workflow.Delivery
+	for _, d := range o.Delivered {
+		if !slices.ContainsFunc(a.Steering, same(d)) && !slices.ContainsFunc(deliveries, same(d)) {
+			deliveries = append(deliveries, d)
+		}
+	}
+	var progress *workflow.Progress
+	if o.State == "running" && o.Progress != nil {
+		p := *o.Progress
+		p.Activity = workflow.BoundActivity(p.Activity)
+		if !workflow.SameProgress(a.Progress, &p) {
+			activityOnly := a.Progress != nil && a.Progress.Phase == p.Phase && a.Progress.Detail == p.Detail && a.Progress.Generation == p.Generation
+			if !activityOnly || e.now().Sub(a.Progress.UpdatedAt) >= e.progressInterval() {
+				progress = &p
+			}
+		}
+	}
+	if len(deliveries) == 0 && progress == nil {
+		return false, nil
+	}
+	kind := "attempt.progress"
+	if len(deliveries) > 0 {
+		kind = "attempt.steering"
+	}
+	_, err := e.update(ctx, runID, revision, kind, func(_ *workflow.Run, v *workflow.Revision) error {
+		current := v.Attempt(a.ID)
+		if current == nil || current.State != "running" {
+			return workflow.ErrConflict
+		}
+		for _, d := range deliveries {
+			if !slices.ContainsFunc(current.Steering, same(d)) {
+				current.Steering = append(current.Steering, d)
+			}
+		}
+		if progress != nil {
+			progress.UpdatedAt = e.now()
+			current.Progress = progress
+		}
+		return nil
+	})
+	return true, err
+}
 
 // reconcileAttempt shares checkpoint semantics between serial and child workers.
 func (e *Engine) reconcileAttempt(ctx context.Context, run *workflow.Run, rev *workflow.Revision, a *workflow.Attempt) (bool, error) {
@@ -47,6 +109,9 @@ func (e *Engine) reconcileAttempt(ctx context.Context, run *workflow.Run, rev *w
 				current.Session = observation.Session
 				return nil
 			})
+			return true, err
+		}
+		if handled, err := e.observe(ctx, id, revision, a, observation); handled || err != nil {
 			return true, err
 		}
 		switch observation.State {

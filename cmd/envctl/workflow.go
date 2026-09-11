@@ -364,6 +364,34 @@ func printRun(cmd *cobra.Command, g *globals, r *workflow.Run) error {
 	if g.jsonOut {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(r)
 	}
-	_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s  %s  %s\n  %s\n", r.ID, r.Name, r.Current().State, r.Description)
-	return err
+	out := cmd.OutOrStdout()
+	if _, err := fmt.Fprintf(out, "%s  %s  %s\n  %s\n", r.ID, r.Name, r.Current().State, r.Description); err != nil {
+		return err
+	}
+	rev := r.Current()
+	for _, a := range rev.Attempts {
+		p := a.Progress
+		if a.State != "running" || p == nil {
+			continue
+		}
+		line := fmt.Sprintf("  %s attempt %d: %s", a.Node, a.Number, p.Phase)
+		if p.Generation > 0 {
+			line += fmt.Sprintf(" (resume %d)", p.Generation)
+		}
+		if p.Detail != "" {
+			line += " — " + p.Detail
+		}
+		fmt.Fprintln(out, line)
+		for _, activity := range p.Activity[max(0, len(p.Activity)-5):] {
+			fmt.Fprintln(out, "    "+activity)
+		}
+	}
+	for _, m := range rev.Messages {
+		node := m.Node
+		if node == "" {
+			node = "any stage"
+		}
+		fmt.Fprintf(out, "  message to %s (%s): %s [%s]\n", m.Recipient, node, m.Body, rev.MessageStatus(m))
+	}
+	return nil
 }

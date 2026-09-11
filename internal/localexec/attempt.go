@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -36,6 +37,11 @@ type attemptRecord struct {
 	Detail        string               `json:"detail,omitempty"`
 	Recovery      *recoverySource      `json:"recovery,omitempty"`
 	RecoveredFrom string               `json:"recovered_from,omitempty"`
+	// Steering lists user messages per agent role and generation. At stays zero
+	// until the job carrying the message has been submitted.
+	Steering          []workflow.Delivery  `json:"steering,omitempty"`
+	Live              map[string]*liveRole `json:"live,omitempty"`
+	SupervisorSession string               `json:"supervisor_session,omitempty"`
 }
 
 // Recovery source preserves interrupted work without creating a proposal,
@@ -234,6 +240,8 @@ func (b *Backend) Start(ctx context.Context, a engine.Assignment) error {
 	r.RecoveredFrom = recoveredFrom
 	r.Worker = agent.Invocation{ID: a.Attempt.ID + "_worker", Role: "worker", Directory: root, Prompt: prompt, Schema: agent.ProposalSchema(node), Model: a.Revision.Config.Agents.Worker.Model, TimeoutSeconds: a.Revision.Config.Limits.AttemptSeconds}
 	r.Worker.Session = resume
+	// prompt() carries every worker-directed message of the revision.
+	r.include(a, "worker", func(m workflow.Message) bool { return m.Recipient == "worker" })
 	if node.Kind != "task" && node.Kind != "plan" {
 		p, err := b.stack(a).Prepare(ctx, stackSpec(a, a.Attempt.ID+"_before", dirs))
 		if err != nil {
@@ -351,12 +359,23 @@ func (b *Backend) pollJob(ctx context.Context, a engine.Assignment, r *attemptRe
 		if len(r.Logs[id]) > 16<<20 {
 			return status, errors.New("guest job evidence exceeds the journal bound")
 		}
-		if id == r.Worker.ID && r.Session == "" {
-			harness, err := agent.SelectVersion(a.Revision.Config.Agents.Worker.Kind, a.Revision.Config.Agents.Worker.Version, b.guest(a))
+		for _, role := range []string{"worker", "supervisor"} {
+			if r.session(role) != "" || !slices.Contains(r.jobs(role), id) {
+				continue
+			}
+			h := a.Revision.Config.Agents.Worker
+			if role == "supervisor" {
+				h = a.Revision.Config.Agents.Supervisor
+			}
+			harness, err := agent.SelectVersion(h.Kind, h.Version, b.guest(a))
 			if err != nil {
 				return status, err
 			}
-			r.Session = harness.Session(r.Logs[id])
+			if role == "supervisor" {
+				r.SupervisorSession = harness.Session(r.Logs[id])
+			} else {
+				r.Session = harness.Session(r.Logs[id])
+			}
 		}
 		if err = b.save(a, r); err != nil {
 			return status, err
@@ -377,7 +396,7 @@ func (b *Backend) failed(a engine.Assignment, r *attemptRecord, detail string) (
 	if err := b.save(a, r); err != nil {
 		return engine.Observation{}, err
 	}
-	return engine.Observation{State: "failed", Detail: detail, Session: r.Session}, nil
+	return engine.Observation{State: "failed", Detail: detail, Session: r.Session, Delivered: r.delivered()}, nil
 }
 
 func (b *Backend) workerFailed(ctx context.Context, a engine.Assignment, r *attemptRecord, detail string) (engine.Observation, error) {
@@ -455,32 +474,62 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 		return engine.Observation{}, err
 	}
 	running := func() (engine.Observation, error) {
-		return engine.Observation{State: "running", Session: r.Session}, nil
+		return engine.Observation{State: "running", Session: r.Session, Progress: b.progress(a, r), Delivered: r.delivered()}, nil
+	}
+	// agentJob reconciles one role's active generation: it finishes stopping a
+	// superseded generation, starts a missing job, records delivery once the
+	// job exists, and interrupts it when new steering arrives. It returns the
+	// job status, or done=false while the role is still running.
+	agentJob := func(role string) (status guestjob.Status, done bool, err error) {
+		if busy, err := b.interrupt(ctx, a, r, role); busy || err != nil {
+			return status, false, err
+		}
+		current := r.invocation(role)
+		if status, err = b.pollJob(ctx, a, r, current.ID); err != nil {
+			return status, false, err
+		}
+		if status.State == "missing" {
+			if err = b.startAgent(ctx, a, *current); err != nil {
+				return status, false, err
+			}
+		}
+		if r.markDelivered(role) {
+			if err = b.save(a, r); err != nil {
+				return status, false, err
+			}
+		}
+		if status.State == "missing" {
+			return status, false, nil
+		}
+		// A completed job whose steering is undelivered is superseded too:
+		// its proposal cannot be accepted without the user's message.
+		if pending(status.State) || status.State == "completed" {
+			steered, err := b.steer(a, r, role)
+			if err != nil || steered {
+				return status, false, err
+			}
+		}
+		return status, !pending(status.State), nil
 	}
 	node := a.Revision.Config.Workflow.Nodes[a.Attempt.Node]
 	switch r.Phase {
 	case "worker":
-		status, err := b.pollJob(ctx, a, r, r.Worker.ID)
+		status, done, err := agentJob("worker")
 		if err != nil {
 			return engine.Observation{}, err
 		}
-		if status.State == "missing" {
-			if err = b.startAgent(ctx, a, r.Worker); err != nil {
-				return engine.Observation{}, err
-			}
-			return running()
-		}
-		if pending(status.State) {
+		if !done {
 			return running()
 		}
 		if status.State != "completed" {
 			return b.workerFailed(ctx, a, r, "worker job ended in "+status.State+"; its journal is retained")
 		}
-		raw, err := b.agentResult(ctx, a, "worker", r.Worker.ID)
+		worker := r.invocation("worker")
+		raw, err := b.agentResult(ctx, a, "worker", worker.ID)
 		if err != nil {
 			return engine.Observation{}, err
 		}
-		proposal, err := agent.ParseProposalWithSchema(clean(a, raw), r.Worker.Schema)
+		proposal, err := agent.ParseProposalWithSchema(clean(a, raw), worker.Schema)
 		if err != nil {
 			return b.workerFailed(ctx, a, r, err.Error())
 		}
@@ -631,8 +680,18 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 				prompt += "\n" + artifact.Name + ":\n" + string(raw)
 			}
 		}
+		steering := ""
+		for _, m := range a.Revision.Messages {
+			if m.Targets(a.Attempt.Node, "supervisor") {
+				steering += "- to the " + m.Recipient + ": " + m.Body + "\n"
+			}
+		}
+		if steering != "" {
+			prompt += "\nUser steering for this stage (reject the work if it does not address steering addressed to the worker):\n" + steering
+		}
 		prompt += "\nYour role is the independent supervisor, not the worker described above. Review alignment with the task, accepted plan and design, actual source, and test evidence. Do not modify files or repeat the implementation. Reject incomplete work with a specific correction. Do not reject Task or Plan for known readiness items that the coordinator is still resolving: assess artifact completeness and report required capabilities. The coordinator separately enforces executable readiness. Return only your structured assessment."
 		r.Supervisor = &agent.Invocation{ID: a.Attempt.ID + "_supervisor", Role: "supervisor", Directory: r.Worker.Directory, Prompt: prompt, Schema: agent.AssessmentSchema(), Model: a.Revision.Config.Agents.Supervisor.Model, TimeoutSeconds: a.Revision.Config.Limits.AttemptSeconds}
+		r.include(a, "supervisor", func(m workflow.Message) bool { return m.Targets(a.Attempt.Node, "supervisor") })
 		r.Phase = "supervisor"
 		if err = b.save(a, r); err != nil {
 			return engine.Observation{}, err
@@ -642,23 +701,17 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 		if r.Supervisor == nil {
 			return engine.Observation{}, errors.New("supervisor request missing from attempt receipt")
 		}
-		status, err := b.pollJob(ctx, a, r, r.Supervisor.ID)
+		status, done, err := agentJob("supervisor")
 		if err != nil {
 			return engine.Observation{}, err
 		}
-		if status.State == "missing" {
-			if err = b.startAgent(ctx, a, *r.Supervisor); err != nil {
-				return engine.Observation{}, err
-			}
-			return running()
-		}
-		if pending(status.State) {
+		if !done {
 			return running()
 		}
 		if status.State != "completed" {
 			return b.failed(a, r, "supervisor job ended in "+status.State)
 		}
-		raw, err := b.agentResult(ctx, a, "supervisor", r.Supervisor.ID)
+		raw, err := b.agentResult(ctx, a, "supervisor", r.invocation("supervisor").ID)
 		if err != nil {
 			return engine.Observation{}, err
 		}
@@ -681,11 +734,11 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 		if err = b.save(a, r); err != nil {
 			return engine.Observation{}, err
 		}
-		return engine.Observation{State: "completed", Result: &r.Result, Session: r.Session}, nil
+		return engine.Observation{State: "completed", Result: &r.Result, Session: r.Session, Delivered: r.delivered()}, nil
 	case "completed":
-		return engine.Observation{State: "completed", Result: &r.Result, Session: r.Session}, nil
+		return engine.Observation{State: "completed", Result: &r.Result, Session: r.Session, Delivered: r.delivered()}, nil
 	case "failed":
-		return engine.Observation{State: "failed", Detail: r.Detail, Session: r.Session}, nil
+		return engine.Observation{State: "failed", Detail: r.Detail, Session: r.Session, Delivered: r.delivered()}, nil
 	default:
 		return engine.Observation{}, errors.New("unknown durable attempt phase")
 	}

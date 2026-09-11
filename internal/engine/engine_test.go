@@ -25,6 +25,7 @@ type fixtureBackend struct {
 	now              func() time.Time
 	missing          map[string]bool
 	planRequirements []workflow.Requirement
+	startRunning     bool // started jobs stay running until the test changes them
 }
 
 func (b *fixtureBackend) Prepare(_ context.Context, a Assignment) (Prepared, error) {
@@ -50,6 +51,9 @@ func (b *fixtureBackend) Start(_ context.Context, a Assignment) error {
 	b.starts[a.Attempt.ID]++
 	if _, exists := b.observations[a.Attempt.ID]; !exists {
 		b.observations[a.Attempt.ID] = Observation{State: "completed", Result: b.result(a)}
+		if b.startRunning {
+			b.observations[a.Attempt.ID] = Observation{State: "running"}
+		}
 	}
 	if b.lostAck {
 		b.lostAck = false

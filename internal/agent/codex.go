@@ -99,8 +99,24 @@ type Invocation struct {
 	Model          string
 	Session        string
 	TimeoutSeconds int
+	// Env carries coordinator-derived ENVCTL_* values, such as guest service
+	// endpoints. It cannot override harness homes or credentials.
+	Env map[string]string `json:",omitempty"`
 }
 type Codex struct{ Guest guestjob.Client }
+
+var invocationEnvKey = regexp.MustCompile(`^ENVCTL_[A-Z0-9_]{1,100}$`)
+
+// withEnv adds validated invocation environment without replacing harness
+// entries; validateInvocation already restricts keys to the ENVCTL_ prefix.
+func withEnv(env map[string]string, i Invocation) map[string]string {
+	for k, v := range i.Env {
+		if _, reserved := env[k]; !reserved {
+			env[k] = v
+		}
+	}
+	return env
+}
 
 func (c Codex) Install(ctx context.Context) error {
 	// Archive pins come from the official release-assets metadata. Installation
@@ -169,6 +185,14 @@ func validateInvocation(i Invocation) error {
 	if i.Session != "" && !sessionID.MatchString(i.Session) {
 		return errors.New("invalid harness session ID")
 	}
+	if len(i.Env) > 128 {
+		return errors.New("harness environment exceeds its bound")
+	}
+	for k, v := range i.Env {
+		if !invocationEnvKey.MatchString(k) || len(v) > 1024 || strings.ContainsAny(v, "\x00\r\n") {
+			return errors.New("harness environment entries must be bounded ENVCTL_ values")
+		}
+	}
 	return nil
 }
 
@@ -193,7 +217,7 @@ func (c Codex) Request(i Invocation, credential Credential) (guestjob.Request, e
 	if credential.APIKey != "" {
 		env["CODEX_API_KEY"] = credential.APIKey
 	}
-	return guestjob.Request{ID: i.ID, Args: args, Dir: i.Directory, Env: env, Input: i.Prompt, Secrets: credential.Secrets, TimeoutSeconds: i.TimeoutSeconds}, nil
+	return guestjob.Request{ID: i.ID, Args: args, Dir: i.Directory, Env: withEnv(env, i), Input: i.Prompt, Secrets: credential.Secrets, TimeoutSeconds: i.TimeoutSeconds}, nil
 }
 
 func (c Codex) Start(ctx context.Context, i Invocation, credential Credential) (guestjob.Status, error) {

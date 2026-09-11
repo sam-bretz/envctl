@@ -50,6 +50,10 @@ messages reach a running worker or supervisor by interrupting its guest job and
 resuming the same harness session; a real Claude worker was steered mid-command
 this way. Each message shows whether it was included at start, delivered live,
 pending, or queued for the next attempt.
+An opt-in `preview` forwards one service to a `127.0.0.1` URL on the host
+through an explicit SSH channel; Lima's automatic forwarding stays disabled.
+Agents and checks receive guest service endpoints as `ENVCTL_SERVICE_*`
+variables.
 Complete database metadata replay, remaining restore cases, the full
 parallel-agent demonstration and a second harness are still incomplete.
 Source joins now require declared merge ownership and checks. The coordinator

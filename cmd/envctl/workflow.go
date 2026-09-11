@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -369,6 +370,12 @@ func printRun(cmd *cobra.Command, g *globals, r *workflow.Run) error {
 		return err
 	}
 	rev := r.Current()
+	printRuntime(out, "", rev.Runtime)
+	for node, child := range rev.ChildRuntimes {
+		if child != nil && (child.Runtime.PreviewURL != "" || len(child.Runtime.Services) > 0) {
+			printRuntime(out, node, child.Runtime)
+		}
+	}
 	for _, a := range rev.Attempts {
 		p := a.Progress
 		if a.State != "running" || p == nil {
@@ -394,6 +401,24 @@ func printRun(cmd *cobra.Command, g *globals, r *workflow.Run) error {
 		fmt.Fprintf(out, "  message to %s (%s): %s [%s]\n", m.Recipient, node, m.Body, rev.MessageStatus(m))
 	}
 	return printLimits(cmd, rev)
+}
+
+// printRuntime separates the host preview from guest-only service endpoints.
+func printRuntime(out io.Writer, branch string, rt workflow.RuntimeState) {
+	scope := ""
+	if branch != "" {
+		scope = " (" + branch + " branch)"
+	}
+	if rt.PreviewURL != "" {
+		fmt.Fprintf(out, "  preview%s: %s\n", scope, rt.PreviewURL)
+	}
+	for _, s := range rt.Services {
+		line := fmt.Sprintf("  service%s %s: %s", scope, s.Name, s.State)
+		if s.URL != "" {
+			line += ", inside the VM at " + s.URL
+		}
+		fmt.Fprintln(out, line)
+	}
 }
 
 type nodeLimit struct {

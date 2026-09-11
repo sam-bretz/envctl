@@ -126,7 +126,7 @@ func (c Claude) Request(i Invocation, credential Credential) (guestjob.Request, 
 	if credential.OAuthToken != "" {
 		env["CLAUDE_CODE_OAUTH_TOKEN"] = credential.OAuthToken
 	}
-	return guestjob.Request{ID: i.ID, Args: args, Dir: i.Directory, Env: env, Input: i.Prompt, Secrets: credential.Secrets, TimeoutSeconds: i.TimeoutSeconds}, nil
+	return guestjob.Request{ID: i.ID, Args: args, Dir: i.Directory, Env: withEnv(env, i), Input: i.Prompt, Secrets: credential.Secrets, TimeoutSeconds: i.TimeoutSeconds}, nil
 }
 
 func (c Claude) Start(ctx context.Context, i Invocation, credential Credential) (guestjob.Status, error) {

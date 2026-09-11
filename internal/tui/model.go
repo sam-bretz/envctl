@@ -582,9 +582,9 @@ func (m Model) details() string {
 		return "Plan must resolve these before downstream execution:\n\n" + strings.Join(problems, "\n") + pluginText
 	case "Services":
 		if child := rev.ChildRuntimes[node]; child != nil {
-			return "Branch runtime for " + node + ":\n" + pretty(child.Runtime)
+			return "Branch runtime for " + node + ":\n" + runtimeSummary(child.Runtime)
 		}
-		return pretty(rev.Runtime)
+		return runtimeSummary(rev.Runtime)
 	case "Graph":
 		order, _ := rev.Config.Workflow.Order()
 		lines := []string{}

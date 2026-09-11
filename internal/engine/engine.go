@@ -78,6 +78,7 @@ type Engine struct {
 	ProgressInterval time.Duration
 	mu               sync.Mutex
 	busy             map[string]bool
+	previewAt        map[string]time.Time
 	wg               sync.WaitGroup
 }
 
@@ -135,6 +136,7 @@ func (e *Engine) Tick(ctx context.Context) error {
 				node := node
 				e.launch(ctx, run.ID+"/"+rev.ID+"/child/"+node, func() error { return e.ReconcileChild(ctx, run.ID, rev.ID, node) })
 			}
+			e.schedulePreviews(ctx, run, rev)
 			if rev.State == "completed" || rev.State == "needs-attention" {
 				continue
 			}
@@ -272,6 +274,7 @@ func (e *Engine) Reconcile(ctx context.Context, id, revision string) error {
 		_, err = e.update(ctx, id, revision, "runtime.stopped", func(_ *workflow.Run, v *workflow.Revision) error {
 			v.Runtime.Ready = false
 			v.Runtime.State = "stopped"
+			v.Runtime.PreviewURL = ""
 			v.Recovery = nil
 			return nil
 		})
@@ -305,6 +308,7 @@ func (e *Engine) Reconcile(ctx context.Context, id, revision string) error {
 		}
 		_, err = e.update(ctx, id, revision, "readiness.refreshed", func(_ *workflow.Run, v *workflow.Revision) error {
 			if runtime != nil {
+				runtime.PreviewURL = v.Runtime.PreviewURL // owned by preview reconciliation
 				v.Runtime = *runtime
 			}
 			for _, p := range probes {

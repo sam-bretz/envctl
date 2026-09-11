@@ -61,8 +61,11 @@ include the parent and draining children. Two real child VMs passed source,
 database, replay and teardown isolation checks; both were removed afterward.
 Local checkpoints now retain nested submodule bundles and LFS bytes, including
 newly created content, and restore them without the original sources. Real guest
-and process-death tests cover that path. Publishing new LFS/submodule objects is
-still pending in the broker. This remains experimental; no complete workflow milestone is yet
+and process-death tests cover that path. The publication broker now uploads a
+changed repository's LFS objects before its branch and publishes new submodule
+commits first, as create-only branches with draft PRs in the submodule
+repositories that the parent PR lists. That path is verified with local Git and
+file-based LFS remotes, not yet against real GitHub LFS. This remains experimental; no complete workflow milestone is yet
 claimed delivered. See the
 [implementation evidence and remaining work](docs/implementation-progress.md).
 

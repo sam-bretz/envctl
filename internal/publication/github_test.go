@@ -26,6 +26,10 @@ type hosting struct {
 	prs        []pull
 	posts      int
 	loseCreate bool
+	// Submodule repositories other than team/app, and the order in which PRs
+	// were created across all repositories.
+	modules map[string]*moduleHost
+	created []string
 }
 
 func TestConcurrentBranchPublicationProbesShareOneObjectStore(t *testing.T) {
@@ -83,6 +87,14 @@ func TestConcurrentBranchPublicationProbesShareOneObjectStore(t *testing.T) {
 }
 
 func (h *hosting) Call(ctx context.Context, method, endpoint string, body, out any) error {
+	if parts := strings.SplitN(endpoint, "/", 4); len(parts) >= 3 && parts[0] == "repos" {
+		name := strings.SplitN(parts[1]+"/"+parts[2], "?", 2)[0]
+		if m, ok := h.modules[name]; ok {
+			return m.call(ctx, h, name, method, endpoint, body, out)
+		} else if name != "team/app" {
+			return HTTPError{404}
+		}
+	}
 	var value any
 	switch {
 	case endpoint == "repos/team/app":
@@ -121,6 +133,7 @@ func (h *hosting) Call(ctx context.Context, method, endpoint string, body, out a
 			return err
 		}
 		h.posts++
+		h.created = append(h.created, "team/app")
 		p := pull{Number: h.posts, URL: fmt.Sprintf("https://github.com/team/app/pull/%d", h.posts), Body: req.Body, State: "open"}
 		p.Head.Ref = req.Head
 		p.Head.SHA = pin

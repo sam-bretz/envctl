@@ -11,8 +11,10 @@ on:
 permissions:
   contents: read
 
+# Deployments share one group; each pull request builds in its own, so PR
+# builds never cancel each other or a deployment.
 concurrency:
-  group: pages
+  group: ${{ github.event_name == 'pull_request' && format('docs-pr-{0}', github.event.pull_request.number) || 'pages' }}
   cancel-in-progress: true
 
 jobs:

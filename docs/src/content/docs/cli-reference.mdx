@@ -50,12 +50,14 @@ Worker-directed messages reach the running worker. The supervisor's prompt inclu
 ## Dashboard themes
 
 ```bash
-envctl ui --theme nord     # this session only
-envctl theme list          # built-in themes with color swatches; ▸ marks the current one
-envctl theme set gruvbox   # save to ~/.config/envctl/config.yaml
+envctl ui --theme nord         # this session only
+envctl theme list              # built-in themes with color swatches; ▸ marks the current one
+envctl theme set gruvbox       # save to ~/.config/envctl/config.yaml
+envctl theme show              # explain the resolved theme, config path, and each color's source
+envctl theme show nord --dark  # preview a theme as if the terminal were dark
 ```
 
-In the dashboard, press `T` to open the theme picker. Moving the selection previews each theme immediately; `enter` keeps and saves it, `esc` restores the previous theme. `envctl theme list --json` returns every palette's colors. See [Dashboard themes](/envctl/config-reference/#dashboard-themes) for the configuration file.
+In the dashboard, press `T` to open the theme picker. Moving the selection previews each theme immediately; `enter` keeps and saves it, `esc` restores the previous theme. `envctl theme list --json` returns every palette's colors, and `envctl theme show [name] [--json]` reports the resolved theme, the configuration file path, and each palette role's value and source (a built-in theme, `theme.custom.<role>`, disabled by `theme.background: false`, or the terminal default). See [Dashboard themes](/envctl/config-reference/#dashboard-themes) for the configuration file.
 
 ## Environment lifecycle
 

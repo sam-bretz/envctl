@@ -76,5 +76,105 @@ func themeCmd(g *globals) *cobra.Command {
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Theme set to %s in %s\n", args[0], path)
 		return err
 	}})
+	var forceDark, forceLight bool
+	show := &cobra.Command{
+		Use:   "show [name]",
+		Short: "Explain which dashboard colors will be used and where each comes from",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runThemeShow(cmd, g, args, forceDark, forceLight)
+		},
+	}
+	show.Flags().BoolVar(&forceDark, "dark", false, "assume a dark terminal background (for auto)")
+	show.Flags().BoolVar(&forceLight, "light", false, "assume a light terminal background (for auto)")
+	show.MarkFlagsMutuallyExclusive("dark", "light")
+	c.AddCommand(show)
 	return c
+}
+
+func runThemeShow(cmd *cobra.Command, g *globals, args []string, forceDark, forceLight bool) error {
+	path, err := tui.ConfigPath()
+	if err != nil {
+		return err
+	}
+	settings, err := tui.LoadSettings(path)
+	if err != nil {
+		return err
+	}
+
+	name := settings.Theme.Name
+	if env := os.Getenv("ENVCTL_THEME"); env != "" {
+		name = env
+	}
+	if len(args) == 1 {
+		name = args[0]
+	}
+	if name == "" {
+		name = tui.Auto
+	}
+	if err := (tui.ThemeConfig{Name: name}).Validate(); err != nil {
+		return err
+	}
+
+	effective := settings.Theme
+	effective.Name = name
+
+	auto := name == tui.Auto
+	dark := true
+	autoMode := ""
+	switch {
+	case forceDark:
+		dark, autoMode = true, "dark"
+	case forceLight:
+		dark, autoMode = false, "light"
+	case auto:
+		dark = lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
+		autoMode = "light"
+		if dark {
+			autoMode = "dark"
+		}
+	}
+	palette, sources := effective.ResolveWithSources(dark)
+
+	if g.jsonOut {
+		roles := make(map[string]tui.RoleResolution, len(tui.Roles()))
+		for _, role := range tui.Roles() {
+			roles[role] = sources[role]
+		}
+		payload := map[string]any{
+			"theme":  palette.Name,
+			"auto":   auto,
+			"config": path,
+			"roles":  roles,
+		}
+		if auto {
+			payload["autoMode"] = autoMode
+		}
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(payload)
+	}
+
+	out := colorprofile.NewWriter(cmd.OutOrStdout(), os.Environ())
+	fmt.Fprintf(out, "Theme:  %s\n", palette.Name)
+	if auto {
+		fmt.Fprintf(out, "Auto:   resolved to %s (%s)\n", autoMode, palette.Name)
+	}
+	fmt.Fprintf(out, "Config: %s\n\n", path)
+	colored := false
+	switch out.Profile {
+	case colorprofile.ANSI, colorprofile.ANSI256, colorprofile.TrueColor:
+		colored = true
+	}
+	for _, role := range tui.Roles() {
+		r := sources[role]
+		swatch := "  "
+		if colored && r.Value != "" {
+			swatch = lipgloss.NewStyle().Foreground(lipgloss.Color(r.Value)).Render("██")
+		}
+		value := r.Value
+		if value == "" {
+			value = "-"
+		}
+		fmt.Fprintf(out, "%s %-10s %-10s %s\n", swatch, role, value, r.Source)
+	}
+	return nil
 }

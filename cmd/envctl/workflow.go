@@ -262,7 +262,7 @@ func runCmd(g *globals) *cobra.Command {
 			}
 			switch kind {
 			case "readiness":
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"revision": run.CurrentRevision, "required": run.Current().Requirements(), "discovered": run.Current().DiscoveredRequirements, "probes": run.Current().Readiness, "children": run.Current().ChildRuntimes, "limits": nodeLimits(run.Current()), "unresolved": run.Current().ReadinessProblems(time.Now(), run.Current().Requirements())})
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"revision": run.CurrentRevision, "required": run.Current().Requirements(), "discovered": run.Current().DiscoveredRequirements, "probes": run.Current().Readiness, "children": run.Current().ChildRuntimes, "limits": nodeLimits(run.Current()), "agents": nodeAgents(run.Current()), "unresolved": run.Current().ReadinessProblems(time.Now(), run.Current().Requirements())})
 			case "checkpoints":
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(run.Current().Checkpoints)
 			}
@@ -512,15 +512,44 @@ func nodeLimits(rev *workflow.Revision) map[string]nodeLimit {
 	}
 	return out
 }
+
+type nodeAgent struct {
+	Worker     string `json:"worker"`
+	Supervisor string `json:"supervisor"`
+}
+
+// nodeAgents reports each node's effective worker/supervisor model. An
+// empty string means the harness default (no --model flag).
+func nodeAgents(rev *workflow.Revision) map[string]nodeAgent {
+	out := map[string]nodeAgent{}
+	for id := range rev.Config.Workflow.Nodes {
+		a := rev.Config.NodeAgents(id)
+		out[id] = nodeAgent{Worker: a.Worker.Model, Supervisor: a.Supervisor.Model}
+	}
+	return out
+}
+
+func formatModel(model string) string {
+	if model == "" {
+		return "harness default"
+	}
+	return model
+}
+
 func printLimits(cmd *cobra.Command, rev *workflow.Revision) error {
 	order, err := rev.Config.Workflow.Order()
 	if err != nil {
 		return err
 	}
 	limits := nodeLimits(rev)
+	agents := nodeAgents(rev)
 	for _, id := range order {
 		l := limits[id]
 		if _, err = fmt.Fprintf(cmd.OutOrStdout(), "  %-12s %d of %d attempts, %ds per attempt, intervene after %ds without output\n", id, l.Attempts, l.MaxAttempts, l.AttemptSeconds, l.StallSeconds); err != nil {
+			return err
+		}
+		a := agents[id]
+		if _, err = fmt.Fprintf(cmd.OutOrStdout(), "               worker model %s, supervisor model %s\n", formatModel(a.Worker), formatModel(a.Supervisor)); err != nil {
 			return err
 		}
 	}

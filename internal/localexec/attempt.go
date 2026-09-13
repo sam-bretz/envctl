@@ -242,7 +242,7 @@ func (b *Backend) Start(ctx context.Context, a engine.Assignment) error {
 	}
 	r := &attemptRecord{Binding: attemptBinding(a), Phase: "worker", Directories: dirs, Cursors: map[string]int64{}, Logs: map[string]string{}, Result: workflow.Result{Commits: map[string]string{}, Sources: map[string]workflow.Artifact{}, SourceObjects: map[string]workflow.Artifact{}}}
 	r.RecoveredFrom = recoveredFrom
-	r.Worker = agent.Invocation{ID: a.Attempt.ID + "_worker", Role: "worker", Directory: root, Prompt: prompt, Schema: agent.ProposalSchema(node), Model: a.Revision.Config.Agents.Worker.Model, TimeoutSeconds: a.Revision.Config.NodeLimits(a.Attempt.Node).AttemptSeconds}
+	r.Worker = agent.Invocation{ID: a.Attempt.ID + "_worker", Role: "worker", Directory: root, Prompt: prompt, Schema: agent.ProposalSchema(node), Model: a.Revision.Config.NodeAgents(a.Attempt.Node).Worker.Model, TimeoutSeconds: a.Revision.Config.NodeLimits(a.Attempt.Node).AttemptSeconds}
 	r.Worker.Session = resume
 	// prompt() carries every worker-directed message of the revision.
 	r.include(a, "worker", func(m workflow.Message) bool { return m.Recipient == "worker" })
@@ -775,7 +775,7 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 		if err != nil {
 			return engine.Observation{}, err
 		}
-		r.Supervisor = &agent.Invocation{ID: a.Attempt.ID + "_supervisor", Role: "supervisor", Directory: r.Worker.Directory, Prompt: prompt, Schema: agent.AssessmentSchema(), Model: a.Revision.Config.Agents.Supervisor.Model, TimeoutSeconds: a.Revision.Config.NodeLimits(a.Attempt.Node).AttemptSeconds, Env: env}
+		r.Supervisor = &agent.Invocation{ID: a.Attempt.ID + "_supervisor", Role: "supervisor", Directory: r.Worker.Directory, Prompt: prompt, Schema: agent.AssessmentSchema(), Model: a.Revision.Config.NodeAgents(a.Attempt.Node).Supervisor.Model, TimeoutSeconds: a.Revision.Config.NodeLimits(a.Attempt.Node).AttemptSeconds, Env: env}
 		r.include(a, "supervisor", func(m workflow.Message) bool { return m.Targets(a.Attempt.Node, "supervisor") })
 		r.Phase = "supervisor"
 		if err = b.save(a, r); err != nil {

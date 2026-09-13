@@ -747,7 +747,8 @@ func (m Model) details() string {
 	node := m.nodeID()
 	switch panels[m.Panel] {
 	case "Conversation":
-		lines := []string{}
+		agents := rev.Config.NodeAgents(node)
+		lines := []string{fmt.Sprintf("Worker model: %s · Supervisor model: %s", formatModelTUI(agents.Worker.Model), formatModelTUI(agents.Supervisor.Model))}
 		for _, a := range rev.Attempts {
 			if a.Node == node {
 				lines = append(lines, fmt.Sprintf("Worker attempt %d: %s", a.Number, a.State))
@@ -775,8 +776,8 @@ func (m Model) details() string {
 				lines = append(lines, "To "+msg.Recipient+": "+msg.Body+"\n  ["+rev.MessageStatus(msg)+"]")
 			}
 		}
-		if len(lines) == 0 {
-			return "No stage messages yet. Press i to address the " + m.Recipient + "."
+		if len(lines) == 1 {
+			return lines[0] + "\n\nNo stage messages yet. Press i to address the " + m.Recipient + "."
 		}
 		return strings.Join(lines, "\n\n")
 	case "Readiness":
@@ -853,6 +854,12 @@ func (m Model) details() string {
 		return "No test evidence at this checkpoint."
 	}
 	return ""
+}
+func formatModelTUI(model string) string {
+	if model == "" {
+		return "harness default"
+	}
+	return model
 }
 func pretty(v any) string {
 	b, err := json.MarshalIndent(v, "", "  ")

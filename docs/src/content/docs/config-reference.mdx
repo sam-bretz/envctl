@@ -109,6 +109,28 @@ Version 2 workflow configurations set revision-wide limits under `limits`. A wor
 
 When an agent is silent for its stall window, the coordinator first resumes the same session with a nudge asking for a status report. A nudged agent that stays silent without any activity, or a third stall in one attempt, fails the attempt with the stall evidence, and the normal retry budget applies. A command or tool call still running, or a model composing its answer after a tool result, extends the window once, to twice its length. A step that legitimately runs quietly for longer than that, such as a long test suite or build, needs a larger `stall_seconds` on that node. A stall window at or above `attempt_seconds` leaves only the attempt timeout in effect.
 
+## Workflow agent models (version 2, experimental)
+
+`agents.worker.model` and `agents.supervisor.model` set the model each role's
+harness uses for every stage. A workflow node can override either role for
+its own stage under `workflow.nodes.<id>.agents.worker.model` /
+`workflow.nodes.<id>.agents.supervisor.model`. Unset values inherit, in
+order: the node override, then the run-wide `agents.<role>.model`, then the
+harness's own default (no `--model` flag).
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `agents.worker.model` | string | harness default | Model the worker harness uses for every stage, unless a node overrides it. |
+| `agents.supervisor.model` | string | harness default | Model the supervisor harness uses for every stage, unless a node overrides it. |
+| `workflow.nodes.<id>.agents.worker.model` | string | inherits | Overrides the worker's model for that node only. |
+| `workflow.nodes.<id>.agents.supervisor.model` | string | inherits | Overrides the supervisor's model for that node only. |
+
+Readiness probes for `harness.worker`/`harness.supervisor` always use the
+run-wide model, since a connection probe has no stage in scope.
+
+`envctl run show` and `envctl run readiness` print each node's effective
+worker and supervisor model next to its attempt budget.
+
 ### Token usage and ceilings
 
 Every run counts the tokens its agents use: worker and supervisor jobs, their steering resumes, and readiness probes that call a model. The counts are what the harness itself reports: input, cache writes, cache reads and output. Cache reads are usually most of the total. Claude also reports an API-list-price cost, shown as "API-equivalent"; on a subscription that is a measure of usage, not a bill.

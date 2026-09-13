@@ -137,6 +137,24 @@ envctl hook claude
 
 `hook claude` prints the `hooks` block to merge into `.claude/settings.json`. See [Agents](/envctl/agents/).
 
+## Doctor
+
+```bash
+envctl doctor [--json]
+```
+
+Checks whether this machine is ready to use envctl and prints an exact one-line fix for every problem. Each check reports `ok`, `warning`, or `failed`:
+
+- **docker** / **docker-compose** -- Docker must be reachable and `docker compose version --short` must report major version 2 or newer; needed for every command. `failed` if either is missing.
+- **git** -- must be on `PATH`; `failed` if missing.
+- **lima** -- Lima 2.x, needed only to run workflow revisions; `warning` (not `failed`) if absent or on an older major version.
+- **gh** -- the GitHub CLI, authenticated (`gh auth status`), needed only for pull-request/publication output; `warning` if absent or unauthenticated.
+- **envctl.yaml** -- whether the current worktree has a manifest at its root and whether it parses, reporting the true on-disk version (1 or 2). Not being in a git repository, or the manifest being absent, is a `warning`; a manifest that fails to parse is `failed`.
+- **agents.worker** / **agents.supervisor** -- for a version 2 manifest only, whether each configured agent credential resolves (Claude or Codex). Omitted entirely for a version 1 manifest. Credential values are never printed, only whether resolution succeeded and, on failure, a fix.
+- **xcode-clt** -- on macOS only (omitted elsewhere), whether the Xcode Command Line Tools are installed *and* current enough for Homebrew to accept them: a Command Line Tools major version older than the running macOS major version is `failed`, since Homebrew refuses to install anything in that state, even though `xcode-select` reports the tools present.
+
+Every check runs with a short timeout, so a hung external tool cannot hang `doctor` itself; a timeout is scored at that check's own severity. `--json` prints the same checks as an array of `{name, status, detail, fix}` objects, omitting `fix` when the status is `ok`. Exit code follows the [Exit codes](#exit-codes) convention: `0` unless at least one check `failed`; warnings alone keep exit code `0`.
+
 ## Agent skill
 
 ```bash

@@ -3,13 +3,21 @@ title: Troubleshooting
 description: The errors you are most likely to meet and what to do about them.
 ---
 
+## Run `envctl doctor` first
+
+```bash
+envctl doctor
+```
+
+Checks Docker/Compose, git, Lima, `gh`, the manifest, and (on macOS) the Xcode Command Line Tools in one pass, printing an exact one-line fix for anything wrong. It's the fastest way to tell whether a problem below is actually a machine setup issue. See [Doctor](/envctl/cli-reference/#doctor) for what each check means.
+
 ## `no envctl.yaml found`
 
-envctl looks for the manifest at the root of the current worktree only. It does not walk above the worktree, because Claude Code nests worktrees under the main checkout and the parent's files would be wrong for this branch. Commit `envctl.yaml` so every worktree has it, or run `envctl init`.
+envctl looks for the manifest at the root of the current worktree only. It does not walk above the worktree, because Claude Code nests worktrees under the main checkout and the parent's files would be wrong for this branch. Commit `envctl.yaml` so every worktree has it, or run `envctl init`. `envctl doctor` reports this too.
 
 ## `docker is not reachable`
 
-`docker info` failed. Start OrbStack or Docker Desktop, or check `docker context show` points at a running engine.
+`docker info` failed. Start OrbStack or Docker Desktop, or check `docker context show` points at a running engine. `envctl doctor` checks this along with whether `docker compose` is v2 or newer.
 
 ## Ports still collide
 

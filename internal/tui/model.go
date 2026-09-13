@@ -50,6 +50,10 @@ type Model struct {
 	CompareRun      string
 	CompareFrom     string
 	DiffRequest     string
+	// Theme is empty until the terminal reports its capabilities, so piped and
+	// non-interactive rendering stays free of escape sequences.
+	Theme theme
+	Frame int
 }
 type snapshotMsg struct {
 	runs []workflow.Run
@@ -76,8 +80,10 @@ var panels = []string{"Conversation", "Checkpoint", "Changes", "Tests", "Service
 func New(api API, root string) Model {
 	return Model{API: api, Root: root, Width: 100, Height: 30, Recipient: "supervisor"}
 }
-func (m Model) Init() tea.Cmd { return tea.Batch(m.refresh(), tick()) }
-func tick() tea.Cmd           { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(m.refresh(), tick(), tea.RequestBackgroundColor)
+}
+func tick() tea.Cmd { return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }) }
 func (m Model) refresh() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -178,7 +184,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ArtifactText = review.Text(v.comparison)
 			m.Offset = 0
 		}
+	case tea.ColorProfileMsg:
+		m.Theme.profile = v.Profile
+	case tea.BackgroundColorMsg:
+		m.Theme.dark = v.IsDark()
 	case tickMsg:
+		m.Frame++
 		return m, tea.Batch(m.refresh(), tick())
 	case tea.PasteMsg:
 		if m.Mode != "" {
@@ -186,10 +197,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.MouseClickMsg:
 		mouse := v.Mouse()
-		if m.Width >= 70 && mouse.Y >= 5 && mouse.Y < 5+m.listHeight() {
-			i := max(0, m.Selected-m.listHeight()+1) + mouse.Y - 5
-			if i < len(m.Runs) {
-				m.Selected = i
+		if m.listHeight() > 0 {
+			if rows := m.headerRows(); mouse.Y >= 0 && mouse.Y < len(rows) && rows[mouse.Y].run > 0 {
+				m.Selected = rows[mouse.Y].run - 1
 				m.ViewedRevision = ""
 				m.Node = 0
 				m.Offset = 0
@@ -387,6 +397,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
+
 func (m Model) listHeight() int {
 	if m.Width < 70 || m.Height < 18 {
 		return 0
@@ -411,101 +422,232 @@ func status(rev *workflow.Revision, node string) string {
 	}
 	return "pending"
 }
-func (m Model) View() tea.View {
+
+// chrome is one rendered line of the frame around the detail panel. Optional
+// lines are dropped first when the terminal cannot fit the whole frame.
+type chrome struct {
+	text     string
+	optional bool
+	run      int // run index + 1 for a run-list row, so clicks map to what was drawn
+}
+
+// trim drops optional rows, last first, until rows fit budget.
+func trim(rows []chrome, budget int) []chrome {
+	rows = append([]chrome(nil), rows...)
+	for i := len(rows) - 1; i >= 0 && len(rows) > budget; i-- {
+		if rows[i].optional {
+			rows = append(rows[:i], rows[i+1:]...)
+		}
+	}
+	if len(rows) > budget {
+		rows = rows[:max(0, budget)]
+	}
+	return rows
+}
+
+func fit(rows []chrome, budget int) []string {
+	lines := []string{}
+	for _, row := range trim(rows, budget) {
+		lines = append(lines, row.text)
+	}
+	return lines
+}
+
+// headerRows is the header exactly as View draws it on a full-size terminal.
+func (m Model) headerRows() []chrome {
 	width, height := max(10, m.Width), max(5, m.Height)
-	compact := width < 70 || height < 18
-	lines := []string{"envctl  /  local workflows", ""}
-	if r := m.current(); r != nil {
-		rev := m.viewRevision()
-		order, _ := rev.Config.Workflow.Order()
-		stages := []string{}
-		for i, id := range order {
-			label := id + " " + status(rev, id)
-			if i == m.Node {
-				label = "[" + label + "]"
-			}
-			stages = append(stages, label)
-		}
-		lines[1] = strings.Join(stages, " → ")
-	} else {
-		lines[1] = "No workflow runs yet. Press n to start from this repository."
+	return trim(m.header(width), max(1, height-len(m.footer(width, false))-3))
+}
+
+// stageStrip draws the DAG as checkpoint glyphs joined by connectors, with the
+// selected stage bracketed so it reads without color.
+func (m Model) stageStrip(width int) string {
+	rev := m.viewRevision()
+	if rev == nil {
+		return m.Theme.dim().Render("No workflow runs yet. Press n to start from this repository.")
 	}
-	lines = append(lines, "", "IN-FLIGHT WORKFLOWS", "")
-	if m.listHeight() > 0 {
-		start := max(0, m.Selected-m.listHeight()+1)
-		for i := start; i < min(len(m.Runs), start+m.listHeight()); i++ {
-			r := m.Runs[i]
-			marker := " "
-			if i == m.Selected {
-				marker = ">"
-			}
-			branch := ""
-			if len(r.Current().Config.Repositories) > 0 {
-				branch = workflow.OutputBranch(r.Current().Config.Repositories[0], r.CurrentRevision)
-			}
-			lines = append(lines, fmt.Sprintf("%s %-24s %-12s %-8s %s", marker, r.Name, r.Current().State, "local", branch))
+	t := m.Theme
+	order, _ := rev.Config.Workflow.Order()
+	stages := make([]string, 0, len(order))
+	for i, id := range order {
+		state := status(rev, id)
+		glyph, c := t.stageLook(state, m.Frame)
+		label := clean(id)
+		if i == m.Node {
+			stages = append(stages, t.fg(c).Render(glyph)+" "+t.strong(t.accent()).Render("["+label+" "+state+"]"))
+			continue
 		}
+		stages = append(stages, t.fg(c).Render(glyph)+" "+t.dim().Render(label))
 	}
-	if r := m.current(); r != nil {
-		rev := m.viewRevision()
-		lines = append(lines, "", r.Name+" · "+rev.State+" · "+rev.ID+m.revisionLabel(), rev.Objective)
-		if rev.Recovery != nil {
-			lines = append(lines, "Recovery ("+rev.Recovery.Phase+"): "+rev.Recovery.Detail)
-		}
-		if rev.Runtime.PreviewURL != "" {
-			lines = append(lines, "Preview: "+rev.Runtime.PreviewURL)
-		}
+	strip := strings.Join(stages, t.fg(t.line()).Render(" ──▸ "))
+	if ansi.StringWidth(strip) <= width {
+		return strip
 	}
-	labels := []string{}
+	// Too narrow for every label: keep glyphs and name only the selected stage.
+	compactStages := make([]string, 0, len(order))
+	for i, id := range order {
+		glyph, c := t.stageLook(status(rev, id), m.Frame)
+		if i == m.Node {
+			compactStages = append(compactStages, t.fg(c).Render(glyph)+t.strong(t.accent()).Render(" "+clean(id)))
+			continue
+		}
+		compactStages = append(compactStages, t.fg(c).Render(glyph))
+	}
+	return ansi.Truncate(strings.Join(compactStages, t.fg(t.line()).Render("─")), width, "…")
+}
+
+func (m Model) runRow(i int, width int) string {
+	t := m.Theme
+	r := m.Runs[i]
+	state := r.Current().State
+	branch := ""
+	if len(r.Current().Config.Repositories) > 0 {
+		branch = workflow.OutputBranch(r.Current().Config.Repositories[0], r.CurrentRevision)
+	}
+	_, c := t.stageLook(state, m.Frame)
+	name, badge := t.style(), t.fg(c)
+	marker := "  "
+	if i == m.Selected {
+		marker = t.strong(t.accent()).Render("▸") + " "
+		name = t.selected()
+	}
+	row := marker + name.Render(pad(clean(r.Name), 24)) + " " + badge.Render(pad(state, 12)) + " " +
+		t.dim().Render(pad("local", 6)+" "+clean(branch))
+	return ansi.Truncate(row, width, "…")
+}
+
+// tabs renders the panel selector. The active panel keeps its brackets so the
+// selection survives a monochrome terminal.
+func (m Model) tabs(width int) string {
+	t := m.Theme
+	labels := make([]string, 0, len(panels))
 	for i, p := range panels {
 		if i == m.Panel {
-			p = "[" + p + "]"
+			style := t.strong(t.accent())
+			if t.colored() {
+				style = style.Underline(true)
+			}
+			labels = append(labels, style.Render("["+p+"]"))
+			continue
 		}
-		labels = append(labels, p)
+		labels = append(labels, t.dim().Render(p))
 	}
-	lines = append(lines, "", strings.Join(labels, "  "), strings.Repeat("─", width))
-	if compact {
-		title := "envctl · " + panels[m.Panel]
-		if r := m.current(); r != nil {
-			title = r.Name + " · " + m.nodeID() + " · " + panels[m.Panel] + m.revisionLabel()
+	return ansi.Truncate(strings.Join(labels, " "), width, "…")
+}
+
+func (m Model) header(width int) []chrome {
+	t := m.Theme
+	mark := t.strong(t.accent()).Render("▎envctl")
+	count := fmt.Sprintf("%d runs", len(m.Runs))
+	root := clean(m.Root)
+	right := t.dim().Render(count + " · " + root)
+	gap := width - ansi.StringWidth(mark) - ansi.StringWidth(right) - 1
+	title := mark + " " + t.dim().Render("local workflows")
+	if gap > ansi.StringWidth(" local workflows") {
+		title = pad(title, width-ansi.StringWidth(right)) + right
+	}
+	rows := []chrome{{text: ansi.Truncate(title, width, "")}}
+	for _, line := range t.box("stages", []string{m.stageStrip(max(0, width-2))}, width) {
+		rows = append(rows, chrome{text: line})
+	}
+	rows = append(rows, chrome{text: "", optional: true})
+	if m.listHeight() > 0 {
+		rows = append(rows, chrome{text: t.dim().Render("IN-FLIGHT WORKFLOWS")})
+		start := max(0, m.Selected-m.listHeight()+1)
+		for i := start; i < min(len(m.Runs), start+m.listHeight()); i++ {
+			rows = append(rows, chrome{text: m.runRow(i, width), optional: i != m.Selected, run: i + 1})
 		}
-		lines = []string{title}
 	}
-	detail := strings.Split(clean(m.details()), "\n")
-	room := max(0, height-len(lines)-4)
-	if compact {
-		room = max(0, height-len(lines)-3)
-	}
-	offset := min(m.Offset, max(0, len(detail)-room))
-	for i := 0; i < room; i++ {
-		if offset+i < len(detail) {
-			lines = append(lines, detail[offset+i])
-		} else {
-			lines = append(lines, "")
+	if r := m.current(); r != nil {
+		rev := m.viewRevision()
+		summary := t.bold().Render(clean(r.Name)) + t.dim().Render(" · "+rev.State+" · "+rev.ID+m.revisionLabel())
+		rows = append(rows,
+			chrome{text: "", optional: true},
+			chrome{text: ansi.Truncate(summary, width, "…")},
+			chrome{text: ansi.Truncate(t.dim().Render(clean(rev.Objective)), width, "…"), optional: true})
+		if rev.Recovery != nil {
+			text := t.fg(t.warn()).Render(clean("Recovery (" + rev.Recovery.Phase + "): " + rev.Recovery.Detail))
+			rows = append(rows, chrome{text: ansi.Truncate(text, width, "…")})
+		}
+		if rev.Runtime.PreviewURL != "" {
+			text := t.fg(t.success()).Render("Preview: ") + clean(rev.Runtime.PreviewURL)
+			rows = append(rows, chrome{text: ansi.Truncate(text, width, "…"), optional: true})
 		}
 	}
-	info := m.Notice
+	return append(rows, chrome{text: "", optional: true}, chrome{text: m.tabs(width)})
+}
+
+// footer holds the message bar, the composer or its hints, and navigation.
+func (m Model) footer(width int, compact bool) []string {
+	t := m.Theme
+	info := t.fg(t.success()).Render(clean(m.Notice))
 	if m.Error != "" {
-		info = "Error: " + m.Error
+		info = t.fg(t.danger()).Render(clean("Error: " + m.Error))
 	}
-	lines = append(lines, info)
-	prompt := "To " + m.Recipient + " · i chat · n new · r rewind · a approve · o artifact · d diff · p/P plugins · x cancel"
-	if compact {
-		prompt = "i chat · o artifact"
-	}
+	lines := []string{ansi.Truncate(info, width, "…")}
 	if m.Mode != "" {
-		prompt = m.Mode + " > " + m.Input
+		input := clean(m.Input) + t.fg(t.accent()).Render("▌")
+		if compact || width < 24 {
+			lines = append(lines, ansi.Truncate(t.bold().Render(m.Mode+" ")+input, width, ""))
+		} else {
+			lines = append(lines, t.box(m.Mode, []string{input}, width)...)
+		}
+	} else {
+		prompt := t.dim().Render("To ") + t.fg(t.accent()).Render(m.Recipient) +
+			t.dim().Render(" · i chat · n new · r rewind · a approve · o artifact · d diff · p/P plugins · x cancel")
+		if compact {
+			prompt = t.dim().Render("i chat · o artifact")
+		}
+		lines = append(lines, ansi.Truncate(prompt, width, ""))
 	}
 	navigation := "↑/↓ runs  ←/→ stages  tab views  pgup/pgdn scroll  s recipient  [/] history  ,/. artifacts  q detach"
 	if compact {
 		navigation = "tab views · q detach"
 	}
-	lines = append(lines, prompt, navigation)
+	return append(lines, ansi.Truncate(t.dim().Render(navigation), width, ""))
+}
+
+func (m Model) View() tea.View {
+	width, height := max(10, m.Width), max(5, m.Height)
+	compact := width < 70 || height < 18
+	t := m.Theme
+	foot := m.footer(width, compact)
+	var head []string
+	if compact {
+		title := "envctl · " + panels[m.Panel]
+		if r := m.current(); r != nil {
+			title = clean(r.Name) + " · " + m.nodeID() + " · " + panels[m.Panel] + m.revisionLabel()
+		}
+		head = []string{ansi.Truncate(t.bold().Render(title), width, "…")}
+	} else {
+		for _, row := range m.headerRows() {
+			head = append(head, row.text)
+		}
+	}
+	detail := strings.Split(clean(m.details()), "\n")
+	room := max(0, height-len(head)-len(foot))
+	framed := !compact && room >= 3
+	if framed {
+		room -= 2
+	}
+	offset := min(m.Offset, max(0, len(detail)-room))
+	body := make([]string, 0, room)
+	for i := 0; i < room; i++ {
+		line := ""
+		if offset+i < len(detail) {
+			line = ansi.Truncate(t.severity(detail[offset+i]).Render(detail[offset+i]), width-2, "…")
+		}
+		body = append(body, line)
+	}
+	if framed {
+		body = t.box(panels[m.Panel], body, width)
+	}
+	lines := append(append(head, body...), foot...)
 	if len(lines) > height {
 		lines = lines[:height]
 	}
 	for i := range lines {
-		lines[i] = ansi.Truncate(clean(lines[i]), width, "")
+		lines[i] = ansi.Truncate(lines[i], width, "")
 	}
 	view := tea.NewView(strings.Join(lines, "\n"))
 	view.AltScreen = true

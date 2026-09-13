@@ -21,13 +21,21 @@ workflow:
       prompt: *go
     qa:
       prompt: *go
-      checks:
+      checks: &checks
         - name: vet
           command: [sh, -c, 'docker run --rm -v "$PWD":/src -w /src -e GOFLAGS=-buildvcs=false -v envctl-gomod:/go/pkg/mod -v envctl-gocache:/root/.cache/go-build golang:1.25 sh -c "test -z \"\$(gofmt -l cmd internal)\" && go vet ./..."']
           timeout_seconds: 900
         - name: test
           command: [sh, -c, 'docker run --rm -v "$PWD":/src -w /src -e GOFLAGS=-buildvcs=false -v envctl-gomod:/go/pkg/mod -v envctl-gocache:/root/.cache/go-build golang:1.25 go test ./...']
           timeout_seconds: 1800
+# Smaller changes skip Design and QA: envctl run create --workflow small
+workflows:
+  small:
+    template: small
+    nodes:
+      build:
+        prompt: *go
+        checks: *checks
 agents:
   worker:
     kind: claude

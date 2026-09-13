@@ -91,8 +91,12 @@ func (b *fixtureBackend) result(a Assignment) *workflow.Result {
 		r.Artifacts = append(r.Artifacts, artifact)
 	}
 	evidence, _ := b.store.PutArtifact("evidence", "text/plain", []byte("executed test and review fixture"))
-	if a.Revision.Config.Workflow.Nodes[a.Attempt.Node].Kind == "qa" {
+	node := a.Revision.Config.Workflow.Nodes[a.Attempt.Node]
+	if node.Kind == "qa" && len(node.Checks) == 0 {
 		r.Checks = []workflow.CheckResult{{Name: "unit", Passed: true, EvidenceDigest: evidence.Digest, CommitsDigest: workflow.Digest(r.Commits)}}
+	}
+	for _, check := range node.Checks {
+		r.Checks = append(r.Checks, workflow.CheckResult{Name: check.Name, Passed: true, EvidenceDigest: evidence.Digest, CommitsDigest: workflow.Digest(r.Commits)})
 	}
 	r.Review = workflow.Review{Accepted: true, Summary: "Fixture reviewed", EvidenceDigest: evidence.Digest, ResultDigest: r.WorkDigest()}
 	return r
@@ -108,12 +112,17 @@ type harness struct {
 
 func setup(t *testing.T) *harness {
 	t.Helper()
+	return setupWorkflow(t, "{template: feature}")
+}
+
+func setupWorkflow(t *testing.T, definition string) *harness {
+	t.Helper()
 	store, err := runstore.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { store.Close() })
-	c, err := workflow.Parse([]byte("version: 2\nproject: test\nrepositories: [{id: app, url: /source}]\nworkflow: {template: feature}\n"))
+	c, err := workflow.Parse([]byte("version: 2\nproject: test\nrepositories: [{id: app, url: /source}]\nworkflow: " + definition + "\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -552,5 +561,25 @@ func TestParallelFailureDoesNotRestartItsSibling(t *testing.T) {
 		if a.Node == "merge" && (a.Inputs["left"] != v.Checkpoints["left"].ID || a.Inputs["right"] != v.Checkpoints["right"].ID) {
 			t.Fatal("join lost exact input checkpoint lineage")
 		}
+	}
+}
+
+// The small workflow has no QA stage: Build's checks are the evidence the
+// approved change publishes.
+func TestSmallWorkflowPublishesOnBuildChecks(t *testing.T) {
+	h := setupWorkflow(t, "{template: small, nodes: {build: {checks: [{name: unit, command: [go, test, ./...]}]}}}")
+	h.until(func(v *workflow.Revision) bool {
+		n := len(v.Attempts)
+		return n > 0 && v.Attempts[n-1].State == "awaiting-approval"
+	})
+	v := h.run().Current()
+	a := v.Attempts[len(v.Attempts)-1]
+	if a.Node != "approved-change" || len(v.Checkpoints) != 2 || h.backend.published != 0 {
+		t.Fatalf("small workflow did not reach approval after plan and build: node %s checkpoints %d", a.Node, len(v.Checkpoints))
+	}
+	h.mutate(func(r *workflow.Run) error { return r.Approve(h.rev, a.ID, "developer", a.Result.WorkDigest(), h.now) })
+	h.until(func(v *workflow.Revision) bool { return v.State == "completed" })
+	if h.backend.published != 1 || len(h.run().Current().Checkpoints) != 3 {
+		t.Fatal("small workflow did not publish once with three checkpoints")
 	}
 }

@@ -253,3 +253,19 @@ func TestMCPPluginAmendmentAndConfigReplayPreserveOriginalInputs(t *testing.T) {
 		t.Fatal("config amendment lost replay identity after another revision")
 	}
 }
+
+func TestMCPCreateSelectsANamedWorkflow(t *testing.T) {
+	api, _ := fixture(t)
+	s := session(t, api, Options{Version: "test"})
+	config := "version: 2\nproject: mcp\nrepositories: [{id: app, url: /source}]\nworkflow: {template: feature}\nworkflows: {small: {template: small, nodes: {build: {checks: [{name: unit, command: [go, test, ./...]}]}}}}\n"
+	in := createInput{OperationID: "small", Name: "Small", Task: "Add a flag", Owner: "test", Directory: t.TempDir(), ConfigYAML: config, Workflow: "small"}
+	var r workflow.Run
+	decode(t, call(t, s, "envctl_create", in), "run", &r)
+	if c := r.Current().Config; c.WorkflowName != "small" || len(c.Workflow.Nodes) != 3 {
+		t.Fatalf("created with workflow %q and %d stages", c.WorkflowName, len(c.Workflow.Nodes))
+	}
+	in.OperationID, in.Workflow = "unknown", "huge"
+	if !call(t, s, "envctl_create", in).IsError {
+		t.Fatal("an unknown workflow was accepted")
+	}
+}

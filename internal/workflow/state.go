@@ -546,12 +546,12 @@ func (r *Revision) validateResultEvidence(node string, result Result, now time.T
 	if n.Kind == "change" {
 		found := false
 		for id, ancestor := range r.Config.Workflow.Nodes {
-			if ancestor.Kind != "qa" || !r.Config.Workflow.Descendants(id)[node] {
+			if !ancestor.verifies() || !r.Config.Workflow.Descendants(id)[node] {
 				continue
 			}
 			cp, ok := r.Checkpoints[id]
 			if !ok {
-				return errors.New("change requires accepted QA evidence")
+				return errors.New("change requires accepted QA or checked-stage evidence")
 			}
 			found = true
 			if len(r.Config.Data.Datasets) > 0 && result.DatasetDigest != cp.Result.DatasetDigest {
@@ -564,7 +564,7 @@ func (r *Revision) validateResultEvidence(node string, result Result, now time.T
 			}
 		}
 		if !found {
-			return errors.New("approved change requires a QA ancestor")
+			return errors.New("approved change requires a QA stage or a stage with checks before it")
 		}
 	}
 	if n.Kind == "qa" && len(checks) == 0 {

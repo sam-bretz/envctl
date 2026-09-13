@@ -53,6 +53,21 @@ Three things matter here.
 
 **QA needs real checks.** The `feature` template gives you the six stages, but its QA stage has no commands, and envctl refuses to accept a QA checkpoint without executable checks. The `nodes.qa` block above merges into the template. A check runs in the VM, in the repository's directory.
 
+**Small changes can skip stages.** Add a named workflow for them. The built-in `small` template runs Plan, then Build, which writes the code and runs its checks, then the approved change:
+
+```yaml
+workflows:
+  small:
+    template: small
+    nodes:
+      build:
+        checks:
+          - name: unit
+            command: [npm, test]
+```
+
+Choose it when you create a run with `--workflow small`, or with `tab` in the dashboard. See [Workflows](/envctl/config-reference/#workflows-version-2-experimental).
+
 **Agents need a credential** that is safe to place in a VM. A `file:` path must be absolute.
 
 Check it before you start anything:
@@ -68,6 +83,8 @@ That prints the complete configuration, including every default it filled in: th
 ```bash
 envctl run create --task "Add CSV export to the orders report" --name "orders csv export"
 ```
+
+Add `--workflow small` to use a named workflow instead of the default; `envctl run workflows` lists them. In the dashboard, press `n`, then `tab` to change the workflow.
 
 This returns immediately with a run ID like `run_8f0c…`. A coordinator starts in the background if one isn't already running, provisions the VM, clones the repository at an exact commit, and starts the first stage. The first run on a machine also downloads the VM image, which takes a while.
 

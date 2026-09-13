@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/sam-bretz/envctl/internal/manifest"
@@ -34,8 +35,13 @@ type Config struct {
 	Data         DataConfig        `yaml:"data,omitempty" json:"data,omitzero"`
 	Agents       AgentConfig       `yaml:"agents" json:"agents"`
 	Workflow     Definition        `yaml:"workflow" json:"workflow"`
-	Limits       Limits            `yaml:"limits" json:"limits"`
-	Dir          string            `yaml:"-" json:"dir"`
+	// Workflows are additional named workflows a run can select when it is
+	// created. A run stores only the workflow it selected, in Workflow.
+	Workflows map[string]Definition `yaml:"workflows,omitempty" json:"workflows,omitempty"`
+	// WorkflowName names the selected workflow; empty is the default one.
+	WorkflowName string `yaml:"-" json:"workflow_name,omitempty"`
+	Limits       Limits `yaml:"limits" json:"limits"`
+	Dir          string `yaml:"-" json:"dir"`
 }
 type Repository struct {
 	ID          string             `yaml:"id" json:"id"`
@@ -246,12 +252,26 @@ func Parse(raw []byte) (Config, error) {
 	if err := input.Decode(&trailing); err != io.EOF {
 		return Config{}, errors.New("expected one configuration document")
 	}
-	if wf, ok := doc["workflow"].(map[string]any); ok && wf["template"] == "feature" {
-		baseBytes, _ := yaml.Marshal(Feature())
+	withTemplate := func(value any) any {
+		wf, ok := value.(map[string]any)
+		name, _ := wf["template"].(string)
+		template, known := templates[name]
+		if !ok || !known {
+			return value
+		}
+		baseBytes, _ := yaml.Marshal(template())
 		var base map[string]any
 		_ = yaml.Unmarshal(baseBytes, &base)
 		merge(base, wf)
-		doc["workflow"] = base
+		return base
+	}
+	if wf, ok := doc["workflow"]; ok {
+		doc["workflow"] = withTemplate(wf)
+	}
+	if named, ok := doc["workflows"].(map[string]any); ok {
+		for name, wf := range named {
+			named[name] = withTemplate(wf)
+		}
 	}
 	normalized, err := yaml.Marshal(doc)
 	if err != nil {
@@ -391,6 +411,22 @@ func (c Config) Validate() error {
 	} else if err := c.validateJoinOwnership(); err != nil {
 		errs = append(errs, err)
 	}
+	names := make([]string, 0, len(c.Workflows))
+	for name := range c.Workflows {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if !identifier.MatchString(name) || name == DefaultWorkflow {
+			errs = append(errs, fmt.Errorf("workflows.%s: workflow names use lowercase letters, digits, - and _, and %q is reserved", name, DefaultWorkflow))
+			continue
+		}
+		selected := c
+		selected.Workflow, selected.Workflows = c.Workflows[name], nil
+		if err := selected.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("workflows.%s: %w", name, err))
+		}
+	}
 	for id, n := range c.Workflow.Nodes {
 		if n.Join != nil {
 			for repo := range n.Join.Repositories {
@@ -417,8 +453,8 @@ func (c Config) Validate() error {
 	return errors.Join(errs...)
 }
 func (d Definition) Validate() error {
-	if d.Template != "" && d.Template != "feature" {
-		return fmt.Errorf("unknown workflow template %q", d.Template)
+	if _, ok := templates[d.Template]; d.Template != "" && !ok {
+		return fmt.Errorf("unknown workflow template %q; built-in templates are %s", d.Template, strings.Join(TemplateNames(), ", "))
 	}
 	if len(d.Nodes) == 0 {
 		return errors.New("workflow has no nodes")
@@ -503,14 +539,21 @@ func (d Definition) Validate() error {
 			task = id
 		}
 	}
-	if plan == "" || task == "" {
-		return errors.New("Task and Plan nodes are required")
+	if plan == "" {
+		return errors.New("a Plan node is required")
 	}
-	if len(d.Nodes[task].Needs) != 0 {
-		return errors.New("Task must be the root")
-	}
-	if !d.Descendants(task)[plan] {
-		return errors.New("Plan must depend on Task")
+	// Task is optional. When present it is the root and Plan follows it;
+	// otherwise Plan is the root. Every other stage comes after Plan either
+	// way, so no stage can bypass Plan readiness.
+	if task != "" {
+		if len(d.Nodes[task].Needs) != 0 {
+			return errors.New("Task must be the root")
+		}
+		if !d.Descendants(task)[plan] {
+			return errors.New("Plan must depend on Task")
+		}
+	} else if len(d.Nodes[plan].Needs) != 0 {
+		return errors.New("Plan must be the root when there is no Task node")
 	}
 	afterPlan := d.Descendants(plan)
 	for id := range d.Nodes {
@@ -518,7 +561,7 @@ func (d Definition) Validate() error {
 			return fmt.Errorf("node %s can bypass Plan readiness", id)
 		}
 	}
-	return nil
+	return d.validateChanges()
 }
 
 // Order uses stable topological ordering; map iteration cannot alter dispatch.

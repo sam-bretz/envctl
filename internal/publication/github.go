@@ -625,7 +625,8 @@ func (b *Broker) publishRepo(ctx context.Context, a engine.Assignment, repo work
 		}
 		slices.Sort(nodes)
 		for _, id := range nodes {
-			if a.Revision.Config.Workflow.Nodes[id].Kind != "qa" || !a.Revision.Config.Workflow.Descendants(id)[a.Attempt.Node] {
+			n := a.Revision.Config.Workflow.Nodes[id]
+			if (n.Kind != "qa" && len(n.Checks) == 0) || !a.Revision.Config.Workflow.Descendants(id)[a.Attempt.Node] {
 				continue
 			}
 			for _, check := range a.Revision.Checkpoints[id].Result.Checks {

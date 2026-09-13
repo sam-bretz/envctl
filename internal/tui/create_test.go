@@ -116,3 +116,40 @@ func TestNewRunCreatesFromTheRepositoryConfiguration(t *testing.T) {
 		t.Fatalf("API failure hidden: %q", m.Error)
 	}
 }
+
+func TestNewRunSelectsANamedWorkflowWithTab(t *testing.T) {
+	root := t.TempDir()
+	config := "version: 2\nproject: shop\nrepositories: [{id: app, url: https://github.com/you/shop.git, ref: main}]\nworkflow: {template: feature}\nworkflows: {small: {template: small, nodes: {build: {checks: [{name: unit, command: [go, test, ./...]}]}}}}\n"
+	if err := os.WriteFile(filepath.Join(root, "envctl.yaml"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	api := &createAPI{}
+	m := New(api, root)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m = next.(Model)
+	m, _ = key(m, "n")
+	if m.NewWorkflow != "default" || !strings.Contains(ansi.Strip(m.View().Content), "default workflow (tab to change)") {
+		t.Fatalf("new-run input does not offer the workflows: %q", m.NewWorkflow)
+	}
+	m, _ = key(m, "tab")
+	if m.NewWorkflow != "small" || !strings.Contains(ansi.Strip(m.View().Content), "small workflow") {
+		t.Fatalf("tab did not select the small workflow: %q", m.NewWorkflow)
+	}
+	m = typeText(m, "Add a flag")
+	m, cmd := key(m, "enter")
+	m = drive(t, m, cmd)
+	if len(api.created) != 1 || m.Error != "" {
+		t.Fatalf("run not created: %d requests, error %q", len(api.created), m.Error)
+	}
+	if c := api.created[0].Config; c.WorkflowName != "small" || len(c.Workflow.Nodes) != 3 || c.Workflows != nil {
+		t.Fatalf("created with the wrong workflow: %q, %d stages", c.WorkflowName, len(c.Workflow.Nodes))
+	}
+	run, err := workflow.NewRun("Add a flag", "Add a flag", "local", api.created[0].Config, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Runs = []workflow.Run{*run}
+	if !strings.Contains(ansi.Strip(m.View().Content), "small workflow") {
+		t.Fatal("the run summary does not name its workflow")
+	}
+}

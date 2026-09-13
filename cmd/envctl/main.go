@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -39,7 +40,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := root().ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, "envctl:", err)
+		if !errors.Is(err, errDoctorFailed) {
+			fmt.Fprintln(os.Stderr, "envctl:", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -65,7 +68,7 @@ func root() *cobra.Command {
 	pf.StringVar(&g.stateDir, "state-dir", "", "workflow state directory (default: user state directory)")
 
 	cmd.AddCommand(upCmd(g), downCmd(g), stopCmd(g), startCmd(g), statusCmd(g), renderCmd(g),
-		logsCmd(g), execCmd(g), listCmd(g), initCmd(g), hookCmd(g), agentCmd(g), envCmd(g), runCmd(g), daemonCmd(g), tuiCmd(g), themeCmd(g), mcpCmd(g))
+		logsCmd(g), execCmd(g), listCmd(g), initCmd(g), hookCmd(g), agentCmd(g), envCmd(g), runCmd(g), daemonCmd(g), tuiCmd(g), themeCmd(g), mcpCmd(g), doctorCmd(g))
 	return cmd
 }
 

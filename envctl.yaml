@@ -1,0 +1,37 @@
+# envctl's own workflow configuration, for dogfooding the workflow runtime.
+# See https://sam-bretz.github.io/envctl/first-workflow/
+version: 2
+project: envctl
+repositories:
+  - id: envctl
+    url: https://github.com/sam-bretz/envctl.git
+    ref: main
+runtime:
+  memory_gib: 6
+stack:
+  files: [compose.workflow.yaml]
+limits:
+  vms: 2
+workflow:
+  template: feature
+  nodes:
+    design:
+      prompt: &go "This VM has Docker but no Go toolchain. Run Go through the Compose toolbox service, or directly with: docker run --rm -v \"$PWD\":/src -w /src -e GOFLAGS=-buildvcs=false -v envctl-gomod:/go/pkg/mod -v envctl-gocache:/root/.cache/go-build golang:1.25 go test ./... . Follow the conventions of the surrounding code and docs/, and keep gofmt, go vet and go test passing."
+    code:
+      prompt: *go
+    qa:
+      prompt: *go
+      checks:
+        - name: vet
+          command: [sh, -c, 'docker run --rm -v "$PWD":/src -w /src -e GOFLAGS=-buildvcs=false -v envctl-gomod:/go/pkg/mod -v envctl-gocache:/root/.cache/go-build golang:1.25 sh -c "test -z \"\$(gofmt -l cmd internal)\" && go vet ./..."']
+          timeout_seconds: 900
+        - name: test
+          command: [sh, -c, 'docker run --rm -v "$PWD":/src -w /src -e GOFLAGS=-buildvcs=false -v envctl-gomod:/go/pkg/mod -v envctl-gocache:/root/.cache/go-build golang:1.25 go test ./...']
+          timeout_seconds: 1800
+agents:
+  worker:
+    kind: claude
+    credential: file:/Users/samuelbretz/.config/envctl/claude-token.json
+  supervisor:
+    kind: claude
+    credential: file:/Users/samuelbretz/.config/envctl/claude-token.json

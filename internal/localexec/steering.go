@@ -201,6 +201,16 @@ type usageCache struct {
 	usage workflow.Usage
 }
 
+// AttemptUsage reads an attempt's usage from its retained job logs. An attempt
+// without a receipt (never started here) has no recorded usage.
+func (b *Backend) AttemptUsage(_ context.Context, a engine.Assignment) (*workflow.Usage, error) {
+	r, err := b.load(a)
+	if err != nil {
+		return nil, nil
+	}
+	return b.usage(a, r), nil
+}
+
 // usage sums the model usage of every agent job in the attempt, each role's
 // generations included. A job's log is parsed again only after it grows.
 func (b *Backend) usage(a engine.Assignment, r *attemptRecord) *workflow.Usage {

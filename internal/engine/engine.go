@@ -59,6 +59,13 @@ type RuntimeReporter interface {
 	RuntimeStatus(context.Context, Assignment) (workflow.RuntimeState, error)
 }
 
+// UsageBackfiller reports the recorded usage of an attempt that stopped before
+// the coordinator tracked usage, so a run's total and its ceiling include work
+// done under an earlier version. It returns nil when nothing was recorded.
+type UsageBackfiller interface {
+	AttemptUsage(context.Context, Assignment) (*workflow.Usage, error)
+}
+
 // BranchRuntimeBackend supports a distinct VM/stack/data namespace per branch.
 // Existing fixture/serial backends retain their original execution contract.
 type BranchRuntimeBackend interface{ IsolateBranches() bool }
@@ -288,6 +295,9 @@ func (e *Engine) Reconcile(ctx context.Context, id, revision string) error {
 	// At the run's usage ceiling, stop every running agent. The backend's
 	// failure path keeps their unfinished source, and nothing new starts.
 	// Work already finished (awaiting approval) can still be approved.
+	if acted, err := e.backfillUsage(ctx, run, revision); acted || err != nil {
+		return err
+	}
 	overBudget, budgetReason := run.Budget()
 	if overBudget {
 		for i := range rev.Attempts {
@@ -554,4 +564,50 @@ func (e *Engine) recover(ctx context.Context, id, revision, phase string, cause 
 		return nil
 	})
 	return err
+}
+
+// backfillUsage records usage for every stopped attempt of the run that has
+// none, once, from the backend's retained job logs. An attempt with no
+// recorded jobs gets empty usage so it is not asked again.
+func (e *Engine) backfillUsage(ctx context.Context, run *workflow.Run, revision string) (bool, error) {
+	filler, ok := e.Backend.(UsageBackfiller)
+	if !ok || run.CurrentRevision != revision {
+		return false, nil
+	}
+	found := map[string]workflow.Usage{}
+	for i := range run.Revisions {
+		rev := &run.Revisions[i]
+		for j := range rev.Attempts {
+			a := &rev.Attempts[j]
+			if a.Usage != nil || a.State == "running" {
+				continue
+			}
+			u, err := filler.AttemptUsage(ctx, assign(run, rev, a))
+			if err != nil {
+				return false, err
+			}
+			if u == nil {
+				u = &workflow.Usage{}
+			}
+			usage := *u
+			usage.Estimated = false
+			found[a.ID] = usage
+		}
+	}
+	if len(found) == 0 {
+		return false, nil
+	}
+	_, err := e.update(ctx, run.ID, revision, "attempt.usage.backfilled", func(r *workflow.Run, _ *workflow.Revision) error {
+		for i := range r.Revisions {
+			for j := range r.Revisions[i].Attempts {
+				a := &r.Revisions[i].Attempts[j]
+				if u, ok := found[a.ID]; ok && a.Usage == nil {
+					usage := u
+					a.Usage = &usage
+				}
+			}
+		}
+		return nil
+	})
+	return true, err
 }

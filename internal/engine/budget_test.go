@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -74,5 +75,60 @@ func TestProbeUsageCountsTowardTheRun(t *testing.T) {
 	}
 	if !strings.Contains(h.run().UsageSummary(), "no ceiling") {
 		t.Fatalf("disabled ceiling not shown: %q", h.run().UsageSummary())
+	}
+}
+
+// backfillBackend reports usage recorded before the coordinator tracked it.
+type backfillBackend struct {
+	*fixtureBackend
+	recorded map[string]*workflow.Usage
+	asked    map[string]int
+}
+
+func (b *backfillBackend) AttemptUsage(_ context.Context, a Assignment) (*workflow.Usage, error) {
+	b.asked[a.Attempt.ID]++
+	return b.recorded[a.Attempt.ID], nil
+}
+
+func TestUsageRecordedBeforeTrackingIsBackfilledAcrossRevisions(t *testing.T) {
+	h := setup(t)
+	h.until(func(v *workflow.Revision) bool { return len(v.Checkpoints) >= 2 })
+	// Simulate attempts finished by an earlier coordinator: no usage stored.
+	h.mutate(func(r *workflow.Run) error {
+		for i := range r.Current().Attempts {
+			r.Current().Attempts[i].Usage = nil
+		}
+		return nil
+	})
+	run := h.run()
+	var ids []string
+	for _, a := range run.Current().Attempts {
+		if a.State != "running" {
+			ids = append(ids, a.ID)
+		}
+	}
+	b := &backfillBackend{fixtureBackend: h.backend, recorded: map[string]*workflow.Usage{ids[0]: {CacheRead: 5_000_000, Output: 40_000, CostUSD: 2.5}}, asked: map[string]int{}}
+	h.engine.Backend = b
+	h.mutate(func(r *workflow.Run) error {
+		r.Current().Config.Limits.RunTokens = 1_000_000
+		return nil
+	})
+	h.step()
+	h.step()
+	u := h.run().Usage()
+	if u.CacheRead != 5_000_000 || u.CostUSD != 2.5 {
+		t.Fatalf("recorded usage not backfilled: %+v", u)
+	}
+	for _, id := range ids {
+		a := h.run().Current().Attempt(id)
+		if a.Usage == nil {
+			t.Fatalf("attempt %s left unmarked", id)
+		}
+		if b.asked[id] != 1 {
+			t.Fatalf("attempt %s asked %d times", id, b.asked[id])
+		}
+	}
+	if over, _ := h.run().Budget(); !over {
+		t.Fatal("backfilled usage does not count toward the ceiling")
 	}
 }

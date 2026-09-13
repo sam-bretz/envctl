@@ -54,6 +54,7 @@ func (m Model) diffKey() string {
 }
 func (m *Model) beginInput(mode string) {
 	m.Mode = mode
+	m.Error, m.refreshFailed = "", false
 	if r := m.current(); r != nil {
 		m.InputRun = r.ID
 		m.InputRevision = m.viewRevision().ID

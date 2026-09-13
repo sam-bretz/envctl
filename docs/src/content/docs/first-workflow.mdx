@@ -147,11 +147,13 @@ Rewinding creates a new revision. The old one stays reviewable under `[` and `]`
 
 ## 8. Approve and get the pull request
 
-The final stage is a human gate. Nothing is pushed until you approve the exact reviewed result:
+The final stage is a human gate. Nothing is pushed until you approve the exact reviewed result. In the dashboard, press `a`: from any other stage it first moves to the stage awaiting approval, so press `a` again there to approve. From a shell:
 
 ```bash
 envctl run approve <run>
 ```
+
+With one change awaiting approval, that approves the result `envctl run show` displays. Pass `--digest` to pin the exact result you reviewed.
 
 envctl then pushes a revision branch and opens a draft pull request whose body lists the validated commits and the QA evidence. If the change adds Git LFS files or moves a submodule, those objects are published first, and the pull request says which submodule pull requests must merge first.
 

@@ -356,10 +356,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.act(daemon.ActionRequest{Action: "cancel"})
 		case "a":
 			if r := m.current(); r != nil {
+				waiting := ""
 				for _, a := range r.Current().Attempts {
-					if a.Node == m.nodeID() && a.State == "awaiting-approval" && a.Result != nil {
+					if a.State != "awaiting-approval" || a.Result == nil {
+						continue
+					}
+					if a.Node == m.nodeID() {
 						return m, m.act(daemon.ActionRequest{Action: "approve", Attempt: a.ID, Actor: "local", WorkDigest: a.Result.WorkDigest()})
 					}
+					waiting = a.Node
+				}
+				// Never approve work the reviewer is not looking at: move to the
+				// stage awaiting approval and ask for a second press there.
+				if waiting != "" {
+					order, _ := m.viewRevision().Config.Workflow.Order()
+					for i, id := range order {
+						if id == waiting {
+							m.Node, m.Offset = i, 0
+							m.clearArtifact()
+						}
+					}
+					m.Error = ""
+					m.Notice = waiting + " is awaiting approval; review it and press a again to approve"
+				} else {
+					m.Notice = ""
+					m.Error = "nothing in this run is awaiting approval"
 				}
 			}
 		case "[":

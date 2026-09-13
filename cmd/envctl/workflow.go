@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -311,6 +312,37 @@ func runCmd(g *globals) *cobra.Command {
 	c.AddCommand(events)
 	return c
 }
+
+// defaultApproval fills --attempt and --digest when omitted: with exactly one
+// attempt awaiting approval, it approves that attempt's current result, the
+// one `envctl run show` and the dashboard display. An explicit --digest still
+// pins the exact reviewed result.
+func defaultApproval(req *daemon.ActionRequest, run *workflow.Run) error {
+	var waiting []workflow.Attempt
+	for _, a := range run.Current().Attempts {
+		if a.State == "awaiting-approval" && a.Result != nil && (req.Attempt == "" || a.ID == req.Attempt) {
+			waiting = append(waiting, a)
+		}
+	}
+	switch {
+	case len(waiting) == 0 && req.Attempt != "":
+		return fmt.Errorf("attempt %s is not awaiting approval", req.Attempt)
+	case len(waiting) == 0:
+		return errors.New("nothing in this run is awaiting approval")
+	case len(waiting) > 1:
+		var ids []string
+		for _, a := range waiting {
+			ids = append(ids, a.ID+" ("+a.Node+")")
+		}
+		return fmt.Errorf("several attempts await approval; choose one with --attempt: %s", strings.Join(ids, ", "))
+	}
+	req.Attempt = waiting[0].ID
+	if req.WorkDigest == "" {
+		req.WorkDigest = waiting[0].Result.WorkDigest()
+	}
+	return nil
+}
+
 func runActionCmd(g *globals, action string) *cobra.Command {
 	req := daemon.ActionRequest{Action: action}
 	var pluginFile string
@@ -332,6 +364,11 @@ func runActionCmd(g *globals, action string) *cobra.Command {
 		}
 		if req.OperationID == "" {
 			req.OperationID = workflow.ID("op")
+		}
+		if action == "approve" {
+			if err = defaultApproval(&req, run); err != nil {
+				return err
+			}
 		}
 		if action == "plugin-attach" {
 			ref, err := plugin.ReadRef(pluginFile)

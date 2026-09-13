@@ -63,6 +63,99 @@ func TestThemeResolution(t *testing.T) {
 	}
 }
 
+func TestResolveWithSources(t *testing.T) {
+	ptrBool := func(b bool) *bool { return &b }
+
+	t.Run("built-in", func(t *testing.T) {
+		_, sources := (ThemeConfig{Name: "catppuccin"}).ResolveWithSources(true)
+		for role, r := range sources {
+			if r.Source != "catppuccin" {
+				t.Fatalf("%s: source = %q, want %q", role, r.Source, "catppuccin")
+			}
+		}
+
+		_, sources = (ThemeConfig{Name: "terminal"}).ResolveWithSources(true)
+		for _, role := range []string{"background", "surface", "text"} {
+			if got := sources[role]; got != (RoleResolution{Value: "", Source: "terminal default"}) {
+				t.Fatalf("terminal.%s = %+v, want terminal default", role, got)
+			}
+		}
+		if got := sources["accent"]; got != (RoleResolution{Value: "4", Source: "terminal"}) {
+			t.Fatalf("terminal.accent = %+v, want {4 terminal}", got)
+		}
+	})
+
+	t.Run("custom override", func(t *testing.T) {
+		_, sources := (ThemeConfig{Name: "catppuccin", Custom: map[string]string{"accent": "#ff0000"}}).ResolveWithSources(true)
+		if got := sources["accent"]; got != (RoleResolution{Value: "#ff0000", Source: "theme.custom.accent"}) {
+			t.Fatalf("accent = %+v, want custom override", got)
+		}
+		if got := sources["success"]; got != (RoleResolution{Value: "#a6e3a1", Source: "catppuccin"}) {
+			t.Fatalf("success = %+v, want unaffected built-in value", got)
+		}
+	})
+
+	t.Run("background disabled", func(t *testing.T) {
+		c := ThemeConfig{Name: "catppuccin", Background: ptrBool(false)}
+		p, sources := c.ResolveWithSources(true)
+		want := RoleResolution{Value: p.Background, Source: "disabled by theme.background: false"}
+		if got := sources["background"]; got != want {
+			t.Fatalf("background = %+v, want %+v", got, want)
+		}
+		if p.Background != "" {
+			t.Fatalf("Resolve disagreed with ResolveWithSources: background = %q", p.Background)
+		}
+	})
+
+	t.Run("disabled and custom on the same role", func(t *testing.T) {
+		c := ThemeConfig{Name: "catppuccin", Background: ptrBool(false), Custom: map[string]string{"background": "#101010"}}
+		_, sources := c.ResolveWithSources(true)
+		if got := sources["background"]; got != (RoleResolution{Value: "#101010", Source: "theme.custom.background"}) {
+			t.Fatalf("background = %+v, want the custom override to win", got)
+		}
+	})
+
+	t.Run("custom none", func(t *testing.T) {
+		_, sources := (ThemeConfig{Name: "catppuccin", Custom: map[string]string{"accent": "none"}}).ResolveWithSources(true)
+		if got := sources["accent"]; got != (RoleResolution{Value: "", Source: "terminal default"}) {
+			t.Fatalf("accent = %+v, want terminal default", got)
+		}
+	})
+
+	t.Run("auto light and dark", func(t *testing.T) {
+		p, sources := (ThemeConfig{}).ResolveWithSources(false)
+		if p.Name != defaultLight {
+			t.Fatalf("auto light resolved to %q, want %q", p.Name, defaultLight)
+		}
+		if got := sources["accent"]; got.Source != defaultLight {
+			t.Fatalf("accent source = %q, want %q", got.Source, defaultLight)
+		}
+		p, sources = (ThemeConfig{}).ResolveWithSources(true)
+		if p.Name != defaultDark {
+			t.Fatalf("auto dark resolved to %q, want %q", p.Name, defaultDark)
+		}
+		if got := sources["accent"]; got.Source != defaultDark {
+			t.Fatalf("accent source = %q, want %q", got.Source, defaultDark)
+		}
+
+		c := ThemeConfig{Light: "gruvbox-light", Dark: "nord"}
+		p, sources = c.ResolveWithSources(false)
+		if p.Name != "gruvbox-light" || sources["accent"].Source != "gruvbox-light" {
+			t.Fatalf("custom auto light not honored: %q %+v", p.Name, sources["accent"])
+		}
+		p, sources = c.ResolveWithSources(true)
+		if p.Name != "nord" || sources["accent"].Source != "nord" {
+			t.Fatalf("custom auto dark not honored: %q %+v", p.Name, sources["accent"])
+		}
+	})
+
+	t.Run("unknown name rejected the same way as theme set", func(t *testing.T) {
+		if err := (ThemeConfig{Name: "neon"}).Validate(); err == nil {
+			t.Fatal("accepted an unknown theme name")
+		}
+	})
+}
+
 func TestSaveThemeNameKeepsTheRestOfTheFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "config.yaml")
 	if err := SaveThemeName(path, "kanagawa"); err != nil {

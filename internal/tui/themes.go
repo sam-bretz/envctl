@@ -143,6 +143,26 @@ func (c ThemeConfig) Validate() error {
 // Resolve returns the palette to draw with. dark is the terminal's reported
 // background; it only matters for "auto".
 func (c ThemeConfig) Resolve(dark bool) Palette {
+	p, _ := c.ResolveWithSources(dark)
+	return p
+}
+
+// RoleResolution is one palette role's resolved value and where it came from.
+type RoleResolution struct {
+	Value  string `json:"value"`
+	Source string `json:"source"`
+}
+
+// Roles lists the palette roles theme.custom.<role> and `envctl theme show`
+// report, in display order.
+func Roles() []string { return slices.Clone(customRoles) }
+
+// ResolveWithSources is Resolve, plus where every role's value came from: the
+// built-in theme's name, "theme.custom.<role>", "disabled by theme.background:
+// false", or "terminal default" for an empty value. The dashboard and
+// `envctl theme show` both resolve through this function so they cannot
+// diverge.
+func (c ThemeConfig) ResolveWithSources(dark bool) (Palette, map[string]RoleResolution) {
 	name := c.Name
 	if name == "" || name == Auto {
 		name = defaultLight
@@ -160,37 +180,58 @@ func (c ThemeConfig) Resolve(dark bool) Palette {
 	if !ok {
 		p, _ = Lookup(defaultDark)
 	}
-	if c.Background != nil && !*c.Background {
-		p.Background = ""
-	}
-	for role, value := range c.Custom {
-		if value == "none" || value == "default" {
-			value = ""
+	sources := make(map[string]RoleResolution, len(customRoles))
+	for _, role := range customRoles {
+		field := roleField(&p, role)
+		source := p.Name
+		if role == "background" && c.Background != nil && !*c.Background {
+			*field = ""
+			source = "disabled by theme.background: false"
 		}
-		switch role {
-		case "background":
-			p.Background = value
-		case "surface":
-			p.Surface = value
-		case "text":
-			p.Text = value
-		case "muted":
-			p.Muted = value
-		case "line":
-			p.Line = value
-		case "accent":
-			p.Accent = value
-		case "success":
-			p.Success = value
-		case "danger":
-			p.Danger = value
-		case "warn":
-			p.Warn = value
-		case "info":
-			p.Info = value
+		if value, ok := c.Custom[role]; ok {
+			if value == "none" || value == "default" {
+				value = ""
+			}
+			*field = value
+			if value == "" {
+				source = "terminal default"
+			} else {
+				source = "theme.custom." + role
+			}
 		}
+		if *field == "" && source == p.Name {
+			source = "terminal default"
+		}
+		sources[role] = RoleResolution{Value: *field, Source: source}
 	}
-	return p
+	return p, sources
+}
+
+// roleField returns a pointer to p's field for role, one of customRoles.
+func roleField(p *Palette, role string) *string {
+	switch role {
+	case "background":
+		return &p.Background
+	case "surface":
+		return &p.Surface
+	case "text":
+		return &p.Text
+	case "muted":
+		return &p.Muted
+	case "line":
+		return &p.Line
+	case "accent":
+		return &p.Accent
+	case "success":
+		return &p.Success
+	case "danger":
+		return &p.Danger
+	case "warn":
+		return &p.Warn
+	case "info":
+		return &p.Info
+	}
+	panic("unknown role " + role)
 }
 
 // ConfigPath is $XDG_CONFIG_HOME/envctl/config.yaml, or ~/.config/envctl/config.yaml.

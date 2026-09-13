@@ -398,7 +398,7 @@ func printRun(cmd *cobra.Command, g *globals, r *workflow.Run) error {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(r)
 	}
 	out := cmd.OutOrStdout()
-	if _, err := fmt.Fprintf(out, "%s  %s  %s\n  %s\n", r.ID, r.Name, r.Current().State, r.Description); err != nil {
+	if _, err := fmt.Fprintf(out, "%s  %s  %s\n  %s\n  %s\n", r.ID, r.Name, r.Current().State, r.Description, r.UsageSummary()); err != nil {
 		return err
 	}
 	rev := r.Current()

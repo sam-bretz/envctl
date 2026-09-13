@@ -102,10 +102,29 @@ Version 2 workflow configurations set revision-wide limits under `limits`. A wor
 | `workflow.nodes.<id>.limits.attempt_seconds` | int | inherits | 1 to 86400. Applies to that node's worker, supervisor and checks without their own `timeout_seconds`. |
 | `limits.stall_seconds` | int | `600` | How long a running worker or supervisor may produce no output before the coordinator intervenes. 60 to 86400. |
 | `workflow.nodes.<id>.limits.stall_seconds` | int | inherits | 60 to 86400. Overrides the stall window for that node's agents. |
+| `limits.run_tokens` | int | `40000000` | Token ceiling for the whole run, across every revision. `-1` disables it. |
+| `limits.run_cost_usd` | number | none | Optional ceiling on the API-list-price cost the harness reports. Claude reports cost; Codex does not. |
 
 `envctl run show` prints each node's used and allowed attempts, its timeout and its stall window. `envctl run readiness` includes the same values under `limits`.
 
-When an agent is silent for its stall window, the coordinator first resumes the same session with a nudge asking for a status report. A nudged agent that stays silent without any activity, or a third stall in one attempt, fails the attempt with the stall evidence, and the normal retry budget applies. A command or tool call still running extends the window once, to twice its length. A step that legitimately runs quietly for longer than that, such as a long test suite or build, needs a larger `stall_seconds` on that node. A stall window at or above `attempt_seconds` leaves only the attempt timeout in effect.
+When an agent is silent for its stall window, the coordinator first resumes the same session with a nudge asking for a status report. A nudged agent that stays silent without any activity, or a third stall in one attempt, fails the attempt with the stall evidence, and the normal retry budget applies. A command or tool call still running, or a model composing its answer after a tool result, extends the window once, to twice its length. A step that legitimately runs quietly for longer than that, such as a long test suite or build, needs a larger `stall_seconds` on that node. A stall window at or above `attempt_seconds` leaves only the attempt timeout in effect.
+
+### Token usage and ceilings
+
+Every run counts the tokens its agents use: worker and supervisor jobs, their steering resumes, and readiness probes that call a model. The counts are what the harness itself reports: input, cache writes, cache reads and output. Cache reads are usually most of the total. Claude also reports an API-list-price cost, shown as "API-equivalent"; on a subscription that is a measure of usage, not a bill.
+
+`envctl run show` and the dashboard show the running total against the ceiling, for example `tokens 13.3M of 40.0M (33%) · cache reads 12.4M · API-equivalent $7.15`. The dashboard colors it at 80% and 100%. Usage of jobs still running is estimated until each job reports its final count.
+
+When a run reaches `limits.run_tokens` or `limits.run_cost_usd`:
+
+- Running workers and supervisors are stopped. Their unfinished source is kept, as with any interrupted attempt.
+- No new attempt or retry starts, and readiness probes that call a model stop.
+- The run shows `needs-attention` with the reason, for example `run used 40.1M of its 40.0M token ceiling (limits.run_tokens)`.
+- Work already waiting for approval can still be approved; publishing uses no tokens.
+
+To continue, raise the ceiling with `envctl run rewind <run> --to <stage> --config <file>` using a configuration with a higher `limits.run_tokens`, or cancel the run.
+
+For scale: two dogfooding runs of envctl on itself used about 10M to 13M tokens each from Task through Code, roughly $5 to $7 API-equivalent, including supervisor corrections and retries.
 
 ## Workflow preview (version 2, experimental)
 

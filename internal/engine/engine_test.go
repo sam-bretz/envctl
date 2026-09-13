@@ -26,6 +26,7 @@ type fixtureBackend struct {
 	missing          map[string]bool
 	planRequirements []workflow.Requirement
 	startRunning     bool // started jobs stay running until the test changes them
+	probeUsage       *workflow.Usage
 }
 
 func (b *fixtureBackend) Prepare(_ context.Context, a Assignment) (Prepared, error) {
@@ -43,7 +44,11 @@ func (b *fixtureBackend) Readiness(_ context.Context, a Assignment) ([]workflow.
 	}
 	var probes []workflow.Probe
 	for _, capability := range a.Revision.Requirements() {
-		probes = append(probes, workflow.Probe{Capability: capability, Binding: "fixture@1", ConfigDigest: workflow.Digest(a.Revision.Config), RuntimeID: a.Revision.Runtime.ID, Passed: !b.unready && !b.missing[capability], Detail: "fixture", EvidenceDigest: artifact.Digest, CheckedAt: b.now(), ExpiresAt: b.now().Add(time.Hour)})
+		var usage *workflow.Usage
+		if strings.HasPrefix(capability, "harness.") {
+			usage = b.probeUsage
+		}
+		probes = append(probes, workflow.Probe{Usage: usage, Capability: capability, Binding: "fixture@1", ConfigDigest: workflow.Digest(a.Revision.Config), RuntimeID: a.Revision.Runtime.ID, Passed: !b.unready && !b.missing[capability], Detail: "fixture", EvidenceDigest: artifact.Digest, CheckedAt: b.now(), ExpiresAt: b.now().Add(time.Hour)})
 	}
 	return probes, nil
 }

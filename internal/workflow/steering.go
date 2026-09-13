@@ -55,7 +55,8 @@ func SameProgress(a, b *Progress) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	return a.Phase == b.Phase && a.Detail == b.Detail && a.Generation == b.Generation && slices.Equal(a.Activity, b.Activity)
+	sameUsage := (a.Usage == nil) == (b.Usage == nil) && (a.Usage == nil || *a.Usage == *b.Usage)
+	return a.Phase == b.Phase && a.Detail == b.Detail && a.Generation == b.Generation && slices.Equal(a.Activity, b.Activity) && sameUsage
 }
 
 // MessageStatus explains where a user message has been delivered, so steering

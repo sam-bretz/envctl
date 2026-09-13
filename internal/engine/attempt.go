@@ -36,6 +36,7 @@ func (e *Engine) observe(ctx context.Context, runID, revision string, a *workflo
 	if o.State == "running" && o.Progress != nil {
 		p := *o.Progress
 		p.Activity = workflow.BoundActivity(p.Activity)
+		p.Usage = o.Usage
 		if !workflow.SameProgress(a.Progress, &p) {
 			activityOnly := a.Progress != nil && a.Progress.Phase == p.Phase && a.Progress.Detail == p.Detail && a.Progress.Generation == p.Generation
 			if !activityOnly || e.now().Sub(a.Progress.UpdatedAt) >= e.progressInterval() {
@@ -102,6 +103,33 @@ func (e *Engine) reconcileAttempt(ctx context.Context, run *workflow.Run, rev *w
 			}); err != nil {
 				return true, err
 			}
+		}
+		// Record final usage before acting on a stopped attempt, so the run's
+		// total and its ceiling include every finished job.
+		// A job stopped before reporting usage keeps its last live figure, so a
+		// cancelled attempt cannot drop out of the run total.
+		var final *workflow.Usage
+		switch {
+		case observation.Usage != nil:
+			final = observation.Usage
+		case a.Progress != nil:
+			final = a.Progress.Usage
+		}
+		var usage workflow.Usage
+		if final != nil {
+			usage = *final
+			usage.Estimated = false
+		}
+		if observation.State != "running" && final != nil && (a.Usage == nil || *a.Usage != usage) {
+			_, err = e.update(ctx, id, revision, "attempt.usage", func(_ *workflow.Run, v *workflow.Revision) error {
+				current := v.Attempt(a.ID)
+				if current == nil || current.State != "running" {
+					return workflow.ErrConflict
+				}
+				current.Usage = &usage
+				return nil
+			})
+			return true, err
 		}
 		if observation.Session != "" && a.Session != observation.Session {
 			_, err = e.update(ctx, id, revision, "attempt.session", func(_ *workflow.Run, v *workflow.Revision) error {

@@ -151,6 +151,41 @@ func CommandInFlight(lines []string) bool {
 	return strings.HasPrefix(last, "running: ") || strings.HasPrefix(last, "tool ")
 }
 
+// Composing reports that the model's turn is in progress: the stream's last
+// event is a tool result, a thinking notice, or the start of a turn. A model
+// writing one long answer (a design document, a structured result) emits no
+// events until it finishes, which is indistinguishable from a hang by output
+// alone, so stall detection grants it the same one-time extension as a command.
+func Composing(stream string) bool {
+	lines := strings.Split(strings.TrimRight(stream, "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := lines[i]
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var event struct {
+			Type    string `json:"type"`
+			Subtype string `json:"subtype"`
+			Item    struct {
+				Type string `json:"type"`
+			} `json:"item"`
+		}
+		if json.Unmarshal([]byte(line), &event) != nil {
+			continue
+		}
+		switch {
+		case event.Type == "user": // Claude: tool results return control to the model
+			return true
+		case event.Type == "system" && event.Subtype == "thinking_tokens":
+			return true
+		case event.Type == "item.completed" && event.Item.Type == "command_execution": // Codex
+			return true
+		}
+		return false
+	}
+	return false
+}
+
 // OutputActivity summarizes plain command output, such as a verification check.
 func OutputActivity(output string, n int) []string {
 	var lines []string

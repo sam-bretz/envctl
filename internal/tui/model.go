@@ -536,8 +536,12 @@ func (m Model) runRow(i int, width int) string {
 		marker = t.strong(t.accent()).Render("▸") + " "
 		name = t.selected()
 	}
+	tokens := t.dim()
+	if r.UsageFraction() >= 0.8 {
+		tokens = t.fg(t.warn())
+	}
 	row := marker + name.Render(pad(clean(r.Name), 24)) + " " + badge.Render(pad(state, 12)) + " " +
-		t.dim().Render(pad("local", 6)+" "+clean(branch))
+		tokens.Render(pad(workflow.FormatTokens(r.Usage().Tokens()), 7)) + " " + t.dim().Render(pad("local", 6)+" "+clean(branch))
 	row = ansi.Truncate(row, width, "…")
 	if i == m.Selected {
 		row = t.highlight(pad(row, width))
@@ -590,9 +594,17 @@ func (m Model) header(width int) []chrome {
 	if r := m.current(); r != nil {
 		rev := m.viewRevision()
 		summary := t.bold().Render(clean(r.Name)) + t.dim().Render(" · "+rev.State+" · "+rev.ID+m.revisionLabel())
+		usage := t.dim()
+		switch fraction := r.UsageFraction(); {
+		case fraction >= 1:
+			usage = t.fg(t.danger())
+		case fraction >= 0.8:
+			usage = t.fg(t.warn())
+		}
 		rows = append(rows,
 			chrome{text: "", optional: true},
 			chrome{text: ansi.Truncate(summary, width, "…")},
+			chrome{text: ansi.Truncate(usage.Render(r.UsageSummary()), width, "…")},
 			chrome{text: ansi.Truncate(t.dim().Render(clean(rev.Objective)), width, "…"), optional: true})
 		if rev.Recovery != nil {
 			text := t.fg(t.warn()).Render(clean("Recovery (" + rev.Recovery.Phase + "): " + rev.Recovery.Detail))

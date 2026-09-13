@@ -191,8 +191,51 @@ type activityCache struct {
 	lines []string
 }
 type activityMemo struct {
-	mu   sync.Mutex
-	jobs map[string]activityCache
+	mu    sync.Mutex
+	jobs  map[string]activityCache
+	usage map[string]usageCache
+}
+
+type usageCache struct {
+	size  int
+	usage workflow.Usage
+}
+
+// usage sums the model usage of every agent job in the attempt, each role's
+// generations included. A job's log is parsed again only after it grows.
+func (b *Backend) usage(a engine.Assignment, r *attemptRecord) *workflow.Usage {
+	var total workflow.Usage
+	for _, role := range []string{"worker", "supervisor"} {
+		h := a.Revision.Config.Agents.Worker
+		if role == "supervisor" {
+			h = a.Revision.Config.Agents.Supervisor
+		}
+		harness, err := agent.SelectVersion(h.Kind, h.Version, b.guest(a))
+		if err != nil {
+			continue
+		}
+		for _, id := range r.jobs(role) {
+			log := r.Logs[id]
+			if log == "" {
+				continue
+			}
+			b.memo.mu.Lock()
+			if b.memo.usage == nil {
+				b.memo.usage = map[string]usageCache{}
+			}
+			c, ok := b.memo.usage[id]
+			if !ok || c.size != len(log) {
+				c = usageCache{size: len(log), usage: harness.Usage(log)}
+				b.memo.usage[id] = c
+			}
+			b.memo.mu.Unlock()
+			total = total.Add(c.usage)
+		}
+	}
+	if total.IsZero() {
+		return nil
+	}
+	return &total
 }
 
 // activity parses a job's log only when it has grown since the last poll.

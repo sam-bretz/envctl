@@ -67,6 +67,8 @@ type Revision struct {
 	ReadinessCheckedAt     time.Time                `json:"readiness_checked_at,omitempty"`
 	DrainNodes             []string                 `json:"drain_nodes,omitempty"`
 	DiscoveredRequirements []Requirement            `json:"discovered_requirements,omitempty"`
+	// ProbeUsage is cumulative usage of real harness readiness probes, by role.
+	ProbeUsage map[string]Usage `json:"probe_usage,omitempty"`
 }
 
 // Recovery is visible, retryable work. Known missing requirements remain in
@@ -96,6 +98,9 @@ type Service struct {
 	URL   string `json:"url,omitempty"`
 }
 type Probe struct {
+	// Usage is the cumulative agent usage of this capability's probes, for
+	// probes that invoke a model; the coordinator records it per revision.
+	Usage          *Usage    `json:"usage,omitempty"`
 	Capability     string    `json:"capability"`
 	Binding        string    `json:"binding"`
 	ConfigDigest   string    `json:"config_digest"`
@@ -127,17 +132,21 @@ type Attempt struct {
 	Approval  *Approval         `json:"approval,omitempty"`
 	RetryAt   time.Time         `json:"retry_at,omitempty"`
 	Progress  *Progress         `json:"progress,omitempty"`
-	Steering  []Delivery        `json:"steering,omitempty"`
+	// Usage is the attempt's final agent usage, recorded when it stops running.
+	Usage    *Usage     `json:"usage,omitempty"`
+	Steering []Delivery `json:"steering,omitempty"`
 }
 
 // Progress is a bounded, redacted observation of a running attempt. It is
 // display state only: it never participates in checkpoint admission.
 type Progress struct {
-	Phase      string    `json:"phase"`
-	Detail     string    `json:"detail,omitempty"`
-	Generation int       `json:"generation,omitempty"`
-	Activity   []string  `json:"activity,omitempty"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	Phase      string `json:"phase"`
+	Detail     string `json:"detail,omitempty"`
+	Generation int    `json:"generation,omitempty"`
+	// Usage is the running attempt's usage so far; it may be estimated.
+	Usage     *Usage    `json:"usage,omitempty"`
+	Activity  []string  `json:"activity,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Delivery records a user message reaching an agent invocation. Generation 0

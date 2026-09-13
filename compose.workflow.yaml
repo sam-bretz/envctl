@@ -1,0 +1,22 @@
+# Compose stack for running envctl's own workflow (dogfooding). Workflow VMs
+# have Docker but no Go toolchain; this service provides one next to the
+# checked-out source. It is not used by `envctl up`.
+services:
+  toolbox:
+    image: golang:1.25
+    command: ["sleep", "infinity"]
+    working_dir: /workspace
+    environment:
+      GOFLAGS: -buildvcs=false
+    volumes:
+      - .:/workspace
+      - gomod:/go/pkg/mod
+      - gocache:/root/.cache/go-build
+    healthcheck:
+      test: ["CMD", "go", "version"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+volumes:
+  gomod:
+  gocache:

@@ -5,7 +5,10 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -57,6 +60,9 @@ type Model struct {
 	// ConfigPath receives theme choices saved from the picker; empty skips saving.
 	ConfigPath string
 	Picker     *themePicker
+	// refreshFailed marks Error as a refresh failure, the only kind a later
+	// successful refresh may clear. Action errors stay until the next action.
+	refreshFailed bool
 }
 type snapshotMsg struct {
 	runs []workflow.Run
@@ -143,6 +149,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case snapshotMsg:
 		if v.err != nil {
 			m.Error = v.err.Error()
+			m.refreshFailed = true
 			return m, nil
 		}
 		previousView := m.viewKey()
@@ -160,8 +167,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.viewKey() != previousView {
 			m.clearArtifact()
 		}
-		m.Error = ""
+		if m.refreshFailed {
+			m.Error = ""
+			m.refreshFailed = false
+		}
 	case actionMsg:
+		m.refreshFailed = false
 		if v.err != nil {
 			m.Error = v.err.Error()
 		} else {
@@ -264,8 +275,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					api, root := m.API, m.Root
 					return m, func() tea.Msg {
 						c, err := workflow.Load(root)
+						if errors.Is(err, os.ErrNotExist) {
+							return actionMsg{err: fmt.Errorf("no envctl.yaml in %s; add a version 2 workflow configuration (see https://sam-bretz.github.io/envctl/first-workflow/)", root)}
+						}
 						if err != nil {
-							return actionMsg{err: err}
+							return actionMsg{err: fmt.Errorf("workflow configuration: %w", err)}
 						}
 						ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 						defer cancel()
@@ -690,7 +704,11 @@ func (m Model) details() string {
 	}
 	r := m.current()
 	if r == nil {
-		return "Create a task with n, or use envctl run create --task ..."
+		hint := "Create a task with n, or use envctl run create --task ...\n\nRuns start from the envctl.yaml in " + m.Root + "."
+		if _, err := os.Stat(filepath.Join(m.Root, "envctl.yaml")); err != nil {
+			hint += "\nThere is no envctl.yaml there yet: add a version 2 workflow configuration first.\nSetup guide: https://sam-bretz.github.io/envctl/first-workflow/"
+		}
+		return hint
 	}
 	rev := m.viewRevision()
 	node := m.nodeID()

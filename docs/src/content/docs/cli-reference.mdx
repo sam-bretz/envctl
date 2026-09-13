@@ -47,6 +47,15 @@ Neither harness accepts input mid-run, so live delivery interrupts and resumes. 
 
 Worker-directed messages reach the running worker. The supervisor's prompt includes every message for its stage, with an instruction to reject work that ignores steering addressed to the worker. Messages that arrive while the supervisor is reviewing interrupt and resume the supervisor the same way. Each role allows 8 live resumes per attempt. After that, progress reports the limit, and further messages reach the supervisor review or the next attempt. Messages that arrive after an attempt's review has finished apply to that stage's next attempt, or to a rewind.
 
+## Pull requests
+
+```bash
+envctl run pr <run>          # print the pull requests the run published
+envctl run pr <run> --open   # open them in the browser
+```
+
+In the dashboard, `g` opens the selected run's pull requests from any stage. Changes that also published submodule pull requests list each one. `--json` prints `[{"key", "url"}]`; before publication the command exits 1 with "no pull request yet".
+
 ## Dashboard themes
 
 ```bash

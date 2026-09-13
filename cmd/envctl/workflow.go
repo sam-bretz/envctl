@@ -186,6 +186,7 @@ func runCmd(g *globals) *cobra.Command {
 	c.AddCommand(fixture)
 	c.AddCommand(runArtifactCmd(g))
 	c.AddCommand(runDiffCmd(g))
+	c.AddCommand(runPRCmd(g))
 	var task, name, taskRef, op string
 	var pluginFiles []string
 	create := &cobra.Command{Use: "create", Short: "Create a workflow invocation from this repository", RunE: func(cmd *cobra.Command, args []string) error {

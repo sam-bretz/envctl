@@ -16,7 +16,28 @@ import (
 type theme struct {
 	profile colorprofile.Profile
 	dark    bool
+	// config is the user's theme section; override is --theme or ENVCTL_THEME;
+	// preview is the picker's highlighted theme while it is open.
+	config   ThemeConfig
+	override string
+	preview  string
+	pal      Palette
 }
+
+// resolve recomputes the palette after any input to the choice changes.
+func (t *theme) resolve() {
+	c := t.config
+	if t.override != "" {
+		c.Name = t.override
+	}
+	if t.preview != "" {
+		c.Name = t.preview
+	}
+	t.pal = c.Resolve(t.dark)
+}
+
+// name is the theme currently drawn, "auto" resolved to its concrete palette.
+func (t theme) name() string { return t.pal.Name }
 
 func (t theme) colored() bool {
 	switch t.profile {
@@ -26,28 +47,28 @@ func (t theme) colored() bool {
 	return false
 }
 
-// pick chooses between a light-background and a dark-background value. Bubble
-// Tea reports the background once at startup and whenever it changes.
-func (t theme) pick(light, dark string) color.Color {
-	if t.dark {
-		return lipgloss.Color(dark)
+// color converts a palette value; "" is the terminal default and returns nil.
+func paletteColor(value string) color.Color {
+	if value == "" {
+		return nil
 	}
-	return lipgloss.Color(light)
+	return lipgloss.Color(value)
 }
 
-func (t theme) accent() color.Color  { return t.pick("#0b5fa5", "#7aa2f7") }
-func (t theme) success() color.Color { return t.pick("#1a7f37", "#7ee787") }
-func (t theme) danger() color.Color  { return t.pick("#b3261e", "#ff7b72") }
-func (t theme) warn() color.Color    { return t.pick("#9a6700", "#e3b341") }
-func (t theme) muted() color.Color   { return t.pick("#6e7781", "#8b949e") }
-func (t theme) line() color.Color    { return t.pick("#d0d7de", "#3d444d") }
+func (t theme) accent() color.Color  { return paletteColor(t.pal.Accent) }
+func (t theme) success() color.Color { return paletteColor(t.pal.Success) }
+func (t theme) danger() color.Color  { return paletteColor(t.pal.Danger) }
+func (t theme) warn() color.Color    { return paletteColor(t.pal.Warn) }
+func (t theme) muted() color.Color   { return paletteColor(t.pal.Muted) }
+func (t theme) line() color.Color    { return paletteColor(t.pal.Line) }
+func (t theme) info() color.Color    { return paletteColor(t.pal.Info) }
 
-// style returns a no-op style unless the terminal supports color, so bold and
-// faint attributes never reach a terminal that reported none.
-func (t theme) style() lipgloss.Style { return lipgloss.NewStyle() }
+// style returns the base text style: the palette's text color on a color
+// terminal, nothing otherwise.
+func (t theme) style() lipgloss.Style { return t.fg(paletteColor(t.pal.Text)) }
 
 func (t theme) fg(c color.Color) lipgloss.Style {
-	if !t.colored() {
+	if !t.colored() || c == nil {
 		return lipgloss.NewStyle()
 	}
 	return lipgloss.NewStyle().Foreground(c)
@@ -56,13 +77,13 @@ func (t theme) strong(c color.Color) lipgloss.Style {
 	if !t.colored() {
 		return lipgloss.NewStyle()
 	}
-	return lipgloss.NewStyle().Foreground(c).Bold(true)
+	return t.fg(c).Bold(true)
 }
 func (t theme) bold() lipgloss.Style {
 	if !t.colored() {
 		return lipgloss.NewStyle()
 	}
-	return lipgloss.NewStyle().Bold(true)
+	return t.style().Bold(true)
 }
 func (t theme) dim() lipgloss.Style { return t.fg(t.muted()) }
 
@@ -72,7 +93,46 @@ func (t theme) selected() lipgloss.Style {
 	if !t.colored() {
 		return lipgloss.NewStyle()
 	}
-	return lipgloss.NewStyle().Foreground(t.accent()).Bold(true)
+	return t.strong(t.accent())
+}
+
+// paint fills an already-styled segment with a background color. Every style
+// reset inside it would otherwise clear the background for the rest of the
+// segment, so each reset re-applies it.
+func (t theme) paint(segment, background string) string {
+	if !t.colored() || background == "" {
+		return segment
+	}
+	on := ansi.Style{}.BackgroundColor(paletteColor(background)).String()
+	segment = strings.ReplaceAll(segment, "\x1b[0m", ansi.ResetStyle)
+	return on + strings.ReplaceAll(segment, ansi.ResetStyle, ansi.ResetStyle+on) + ansi.ResetStyle
+}
+
+// highlight paints the selection surface behind a segment.
+func (t theme) highlight(segment string) string { return t.paint(segment, t.pal.Surface) }
+
+// canvas paints the theme background behind a full-width screen line.
+func (t theme) canvas(line string, width int) string {
+	if t.pal.Background == "" {
+		return line
+	}
+	return t.paint(pad(line, width), t.pal.Background)
+}
+
+// swatch previews a palette as colored blocks.
+func (t theme) swatch(p Palette) string {
+	if !t.colored() {
+		return ""
+	}
+	out := ""
+	for _, value := range []string{p.Background, p.Accent, p.Success, p.Warn, p.Danger, p.Info} {
+		if value == "" {
+			out += "  "
+			continue
+		}
+		out += lipgloss.NewStyle().Foreground(lipgloss.Color(value)).Render("██")
+	}
+	return out
 }
 
 // stageLook maps a node's execution state to its glyph and color. Glyphs are

@@ -129,3 +129,33 @@ preview:
 The coordinator binds one port on `127.0.0.1` (never another interface) and forwards each connection over `ssh -W` through the VM's Lima SSH configuration to exactly that guest port. It advertises the URL in `envctl run show`, the Bubble Tea header and Services panel, and the run's `runtime.preview_url` only while an HTTP request through it succeeds. The forward belongs to the coordinator process: it is re-established on the same port after a restart, including for completed runs kept for inspection, and removed when the VM is released, cancelled or superseded by a rewind. Anyone who can connect to your machine's loopback can open the preview.
 
 Workers, supervisors and checks receive the running services' guest-loopback endpoints as `ENVCTL_SERVICE_<NAME>_HOST`, `ENVCTL_SERVICE_<NAME>_URL` (lowest published port) and `ENVCTL_SERVICE_<NAME>_PORT_<CONTAINER_PORT>`. These addresses work inside the VM only. A worker's values are fixed when its attempt starts; checks read them when they are submitted. Services with fixed published ports keep stable values across restarts.
+
+## Dashboard themes
+
+The dashboard (`envctl ui`) reads your personal settings from `~/.config/envctl/config.yaml`, or `$XDG_CONFIG_HOME/envctl/config.yaml` when that is set. This file belongs to you, not to a repository.
+
+```yaml
+theme:
+  name: auto               # or any built-in theme below
+  dark: tokyo-night        # used by auto on a dark terminal
+  light: tokyo-night-day   # used by auto on a light terminal
+  background: true         # false keeps your terminal's own background
+  custom:
+    accent: "#ff9e64"
+```
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `theme.name` | `auto` | `auto` picks `light` or `dark` from the terminal's reported background. |
+| `theme.dark` | `catppuccin` | Theme `auto` uses on a dark background. |
+| `theme.light` | `catppuccin-latte` | Theme `auto` uses on a light background. |
+| `theme.background` | `true` | `false` stops painting the theme background, for transparent or image backgrounds. |
+| `theme.custom.<role>` | none | Overrides one color of the selected theme. |
+
+Built-in themes: `terminal`, `catppuccin`, `catppuccin-latte`, `tokyo-night`, `tokyo-night-day`, `gruvbox`, `gruvbox-light`, `nord`, `dracula`, `rose-pine`, `rose-pine-dawn`, `kanagawa`, `everforest`, `solarized-dark`, `solarized-light`, `github-dark`, `github-light`.
+
+`terminal` uses the 16 ANSI colors of your terminal's own theme and never paints a background, so the dashboard matches whatever Ghostty, iTerm2 or WezTerm theme you already use.
+
+Custom roles are `background`, `surface` (selection highlight), `text`, `muted`, `line` (borders), `accent`, `success`, `danger`, `warn` and `info`. A value is `#rgb`, `#rrggbb`, an ANSI index `0` to `255`, or `none` for the terminal default. Unknown themes, roles or colors are reported when the dashboard starts, and it falls back to the default theme.
+
+The choice resolves in this order: `envctl ui --theme <name>`, then `ENVCTL_THEME`, then the file. Colors are reduced to what your terminal supports, and are omitted entirely when `NO_COLOR` is set or output is not a terminal.

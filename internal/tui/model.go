@@ -54,6 +54,9 @@ type Model struct {
 	// non-interactive rendering stays free of escape sequences.
 	Theme theme
 	Frame int
+	// ConfigPath receives theme choices saved from the picker; empty skips saving.
+	ConfigPath string
+	Picker     *themePicker
 }
 type snapshotMsg struct {
 	runs []workflow.Run
@@ -78,7 +81,9 @@ type tickMsg time.Time
 var panels = []string{"Conversation", "Checkpoint", "Changes", "Tests", "Services", "Readiness", "Graph", "History"}
 
 func New(api API, root string) Model {
-	return Model{API: api, Root: root, Width: 100, Height: 30, Recipient: "supervisor"}
+	m := Model{API: api, Root: root, Width: 100, Height: 30, Recipient: "supervisor"}
+	m.Theme.resolve()
+	return m
 }
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(m.refresh(), tick(), tea.RequestBackgroundColor)
@@ -188,6 +193,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Theme.profile = v.Profile
 	case tea.BackgroundColorMsg:
 		m.Theme.dark = v.IsDark()
+		m.Theme.resolve()
 	case tickMsg:
 		m.Frame++
 		return m, tea.Batch(m.refresh(), tick())
@@ -210,6 +216,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		key := v.String()
 		if key == "ctrl+c" {
 			return m, tea.Quit
+		}
+		if m.Picker != nil {
+			return m.updatePicker(key), nil
 		}
 		if m.Mode != "" {
 			switch key {
@@ -272,6 +281,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key {
 		case "esc":
 			m.clearArtifact()
+		case "T":
+			m.openPicker()
 		case "q":
 			return m, tea.Quit
 		case "j", "down":
@@ -474,7 +485,7 @@ func (m Model) stageStrip(width int) string {
 		glyph, c := t.stageLook(state, m.Frame)
 		label := clean(id)
 		if i == m.Node {
-			stages = append(stages, t.fg(c).Render(glyph)+" "+t.strong(t.accent()).Render("["+label+" "+state+"]"))
+			stages = append(stages, t.fg(c).Render(glyph)+" "+t.highlight(t.strong(t.accent()).Render("["+label+" "+state+"]")))
 			continue
 		}
 		stages = append(stages, t.fg(c).Render(glyph)+" "+t.dim().Render(label))
@@ -513,7 +524,11 @@ func (m Model) runRow(i int, width int) string {
 	}
 	row := marker + name.Render(pad(clean(r.Name), 24)) + " " + badge.Render(pad(state, 12)) + " " +
 		t.dim().Render(pad("local", 6)+" "+clean(branch))
-	return ansi.Truncate(row, width, "…")
+	row = ansi.Truncate(row, width, "…")
+	if i == m.Selected {
+		row = t.highlight(pad(row, width))
+	}
+	return row
 }
 
 // tabs renders the panel selector. The active panel keeps its brackets so the
@@ -527,7 +542,7 @@ func (m Model) tabs(width int) string {
 			if t.colored() {
 				style = style.Underline(true)
 			}
-			labels = append(labels, style.Render("["+p+"]"))
+			labels = append(labels, t.highlight(style.Render("["+p+"]")))
 			continue
 		}
 		labels = append(labels, t.dim().Render(p))
@@ -600,7 +615,7 @@ func (m Model) footer(width int, compact bool) []string {
 		}
 		lines = append(lines, ansi.Truncate(prompt, width, ""))
 	}
-	navigation := "↑/↓ runs  ←/→ stages  tab views  pgup/pgdn scroll  s recipient  [/] history  ,/. artifacts  q detach"
+	navigation := "↑/↓ runs  ←/→ stages  tab views  pgup/pgdn scroll  s recipient  [/] history  ,/. artifacts  T theme  q detach"
 	if compact {
 		navigation = "tab views · q detach"
 	}
@@ -632,15 +647,20 @@ func (m Model) View() tea.View {
 	}
 	offset := min(m.Offset, max(0, len(detail)-room))
 	body := make([]string, 0, room)
-	for i := 0; i < room; i++ {
+	title := panels[m.Panel]
+	if m.Picker != nil {
+		title = "Theme"
+		body = m.pickerLines(width, room)
+	}
+	for i := len(body); i < room; i++ {
 		line := ""
-		if offset+i < len(detail) {
+		if m.Picker == nil && offset+i < len(detail) {
 			line = ansi.Truncate(t.severity(detail[offset+i]).Render(detail[offset+i]), width-2, "…")
 		}
 		body = append(body, line)
 	}
 	if framed {
-		body = t.box(panels[m.Panel], body, width)
+		body = t.box(title, body, width)
 	}
 	lines := append(append(head, body...), foot...)
 	if len(lines) > height {
@@ -648,6 +668,15 @@ func (m Model) View() tea.View {
 	}
 	for i := range lines {
 		lines[i] = ansi.Truncate(lines[i], width, "")
+	}
+	// A painted theme owns the whole screen, including rows below the frame.
+	if t.colored() && t.pal.Background != "" {
+		for len(lines) < height {
+			lines = append(lines, "")
+		}
+		for i := range lines {
+			lines[i] = t.canvas(lines[i], width)
+		}
 	}
 	view := tea.NewView(strings.Join(lines, "\n"))
 	view.AltScreen = true
@@ -789,7 +818,24 @@ func clean(s string) string {
 		return -1
 	}, ansi.Strip(s))
 }
-func Run(ctx context.Context, api API, root string) error {
-	_, err := tea.NewProgram(New(api, root), tea.WithContext(ctx)).Run()
+
+// Options select the dashboard theme. Theme overrides the configuration file
+// for this session; ConfigPath is where the picker saves a new choice.
+type Options struct {
+	Theme      string
+	ConfigPath string
+	Settings   Settings
+	// Warning is shown on the first frame, for example an unreadable config.
+	Warning string
+}
+
+func Run(ctx context.Context, api API, root string, opts Options) error {
+	m := New(api, root)
+	m.ConfigPath = opts.ConfigPath
+	m.Theme.config = opts.Settings.Theme
+	m.Theme.override = opts.Theme
+	m.Theme.resolve()
+	m.Error = opts.Warning
+	_, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	return err
 }

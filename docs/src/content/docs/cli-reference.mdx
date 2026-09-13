@@ -47,6 +47,16 @@ Neither harness accepts input mid-run, so live delivery interrupts and resumes. 
 
 Worker-directed messages reach the running worker. The supervisor's prompt includes every message for its stage, with an instruction to reject work that ignores steering addressed to the worker. Messages that arrive while the supervisor is reviewing interrupt and resume the supervisor the same way. Each role allows 8 live resumes per attempt. After that, progress reports the limit, and further messages reach the supervisor review or the next attempt. Messages that arrive after an attempt's review has finished apply to that stage's next attempt, or to a rewind.
 
+## Dashboard themes
+
+```bash
+envctl ui --theme nord     # this session only
+envctl theme list          # built-in themes with color swatches; ▸ marks the current one
+envctl theme set gruvbox   # save to ~/.config/envctl/config.yaml
+```
+
+In the dashboard, press `T` to open the theme picker. Moving the selection previews each theme immediately; `enter` keeps and saves it, `esc` restores the previous theme. `envctl theme list --json` returns every palette's colors. See [Dashboard themes](/envctl/config-reference/#dashboard-themes) for the configuration file.
+
 ## Environment lifecycle
 
 ```bash

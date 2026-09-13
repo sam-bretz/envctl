@@ -76,7 +76,18 @@ func TestColorProfileAddsStylingWithoutChangingText(t *testing.T) {
 	if !strings.ContainsRune(styled, '\x1b') {
 		t.Fatal("a color terminal rendered no styling")
 	}
-	if a, b := strings.Split(ansi.Strip(styled), "\n"), strings.Split(plain.View().Content, "\n"); len(a) != len(b) {
+	normalize := func(view string) []string {
+		lines := strings.Split(view, "\n")
+		for i := range lines {
+			lines[i] = strings.TrimRight(lines[i], " ")
+		}
+		for len(lines) > 0 && lines[len(lines)-1] == "" {
+			lines = lines[:len(lines)-1]
+		}
+		return lines
+	}
+	// A painted background pads every row to the screen; compare the text.
+	if a, b := normalize(ansi.Strip(styled)), normalize(plain.View().Content); len(a) != len(b) {
 		t.Fatalf("styling changed the line count: %d vs %d", len(a), len(b))
 	} else {
 		for i := range a {

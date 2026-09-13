@@ -88,18 +88,50 @@ func connect(ctx context.Context, g *globals) (*daemon.Client, error) {
 		}
 	}
 }
-func launchTUI(cmd *cobra.Command, g *globals) error {
+func launchTUI(cmd *cobra.Command, g *globals, themeName string) error {
 	if g.jsonOut || !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		return cmd.Help()
+	}
+	opts, err := dashboardOptions(themeName)
+	if err != nil {
+		return err
 	}
 	client, err := connect(cmd.Context(), g)
 	if err != nil {
 		return err
 	}
-	return tui.Run(cmd.Context(), client, workflowRoot(cmd.Context(), g.dir))
+	return tui.Run(cmd.Context(), client, workflowRoot(cmd.Context(), g.dir), opts)
+}
+
+// dashboardOptions reads the theme choice: --theme, then ENVCTL_THEME, then the
+// configuration file. An unreadable file falls back to the default theme and is
+// reported in the dashboard rather than blocking it.
+func dashboardOptions(themeName string) (tui.Options, error) {
+	opts := tui.Options{Theme: themeName}
+	if opts.Theme == "" {
+		opts.Theme = os.Getenv("ENVCTL_THEME")
+	}
+	if opts.Theme != "" {
+		if err := (tui.ThemeConfig{Name: opts.Theme}).Validate(); err != nil {
+			return opts, err
+		}
+	}
+	path, err := tui.ConfigPath()
+	if err != nil {
+		return opts, nil
+	}
+	opts.ConfigPath = path
+	if opts.Settings, err = tui.LoadSettings(path); err != nil {
+		opts.Settings = tui.Settings{}
+		opts.Warning = "Using the default theme: " + err.Error()
+	}
+	return opts, nil
 }
 func tuiCmd(g *globals) *cobra.Command {
-	return &cobra.Command{Use: "ui", Short: "Attach the Bubble Tea workflow dashboard", RunE: func(cmd *cobra.Command, args []string) error { return launchTUI(cmd, g) }}
+	var themeName string
+	c := &cobra.Command{Use: "ui", Short: "Attach the Bubble Tea workflow dashboard", RunE: func(cmd *cobra.Command, args []string) error { return launchTUI(cmd, g, themeName) }}
+	c.Flags().StringVar(&themeName, "theme", "", "theme for this session (see envctl theme list)")
+	return c
 }
 func daemonCmd(g *globals) *cobra.Command {
 	c := &cobra.Command{Use: "daemon", Short: "Manage the persistent workflow coordinator"}

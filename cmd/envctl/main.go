@@ -52,7 +52,7 @@ func root() *cobra.Command {
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		RunE:          func(cmd *cobra.Command, args []string) error { return launchTUI(cmd, g) },
+		RunE:          func(cmd *cobra.Command, args []string) error { return launchTUI(cmd, g, "") },
 	}
 	pf := cmd.PersistentFlags()
 	pf.StringVarP(&g.dir, "dir", "C", ".", "directory inside the worktree to operate on")
@@ -65,7 +65,7 @@ func root() *cobra.Command {
 	pf.StringVar(&g.stateDir, "state-dir", "", "workflow state directory (default: user state directory)")
 
 	cmd.AddCommand(upCmd(g), downCmd(g), stopCmd(g), startCmd(g), statusCmd(g), renderCmd(g),
-		logsCmd(g), execCmd(g), listCmd(g), initCmd(g), hookCmd(g), agentCmd(g), envCmd(g), runCmd(g), daemonCmd(g), tuiCmd(g), mcpCmd(g))
+		logsCmd(g), execCmd(g), listCmd(g), initCmd(g), hookCmd(g), agentCmd(g), envCmd(g), runCmd(g), daemonCmd(g), tuiCmd(g), themeCmd(g), mcpCmd(g))
 	return cmd
 }
 

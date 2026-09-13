@@ -18,6 +18,8 @@ type Harness interface {
 	Session(string) string
 	// Activity summarizes the native event stream for live progress display.
 	Activity(string) []string
+	// Usage sums the model usage the native event stream reports.
+	Usage(string) workflow.Usage
 }
 
 func Select(kind string, guest guestjob.Client) (Harness, error) {

@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -228,7 +230,7 @@ func (b *Backend) Start(ctx context.Context, a engine.Assignment) error {
 	}
 	node := a.Revision.Config.Workflow.Nodes[a.Attempt.Node]
 	root := dirs[a.Revision.Config.Repositories[0].ID]
-	if err := b.Provider.Exec(ctx, a.Revision.Runtime.ID, vm.Command{Args: []string{"sudo", "install", "-d", "-m", "0700", "-o", "envctl-agent", "-g", "envctl-agent", scratchDirectory(a)}, Stderr: io.Discard}); err != nil {
+	if err := b.Provider.Exec(ctx, a.Revision.Runtime.ID, vm.Command{Args: []string{"sudo", "install", "-d", "-m", "0700", "-o", "envctl-agent", "-g", "envctl-agent", scratchDirectory(a), outputsDirectory(a)}, Stderr: io.Discard}); err != nil {
 		return errors.New("stage scratch directory preparation failed")
 	}
 	prompt, err := b.prompt(a, dirs)
@@ -274,8 +276,13 @@ func (b *Backend) prompt(a engine.Assignment, dirs map[string]string) (string, e
 	node := a.Revision.Config.Workflow.Nodes[a.Attempt.Node]
 	var text strings.Builder
 	fmt.Fprintf(&text, "You are the worker for envctl stage %q (kind %s).\nObjective: %s\nStage instructions: %s\nRepository worktrees: %s\nWritable repositories: %s\n", a.Attempt.Node, node.Kind, a.Revision.Objective, node.Prompt, mustJSON(dirs), mustJSON(node.Writes))
-	text.WriteString("Complete this stage and return the required structured artifacts. Use tools to inspect and implement. Implementation changes belong inside the assigned writable worktrees. Do not modify source in other attempts, agent homes, orchestration files, or VM configuration. Do not push, create a PR, or approve changes. The coordinator runs checks and a separate supervisor reviews your proposal. For read-only repositories do not create, remove, or edit tracked or untracked files; adding a report directory also violates the read-only contract. Return documentation in the structured artifacts response. Plan must enumerate downstream capabilities, tests, datasets, harness and publication requirements and resolve scope against the objective.\n")
-	fmt.Fprintf(&text, "Temporary reports, screenshots and test output may be written to this attempt's private scratch directory: %s. It is outside the source checkpoints. Copy any evidence that should be retained into your structured artifacts response.\n", scratchDirectory(a))
+	text.WriteString("Complete this stage and return the required structured artifacts. Use tools to inspect and implement. Implementation changes belong inside the assigned writable worktrees. Do not modify source in other attempts, agent homes, orchestration files, or VM configuration. Do not push, create a PR, or approve changes. The coordinator runs checks and a separate supervisor reviews your proposal. For read-only repositories do not create, remove, or edit tracked or untracked files; adding a report directory also violates the read-only contract. Plan must enumerate downstream capabilities, tests, datasets, harness and publication requirements and resolve scope against the objective.\n")
+	fmt.Fprintf(&text, "Temporary reports, screenshots and test output may be written to this attempt's private scratch directory: %s. It is outside the source checkpoints.\n", scratchDirectory(a))
+	var outputs []string
+	for _, name := range node.Outputs {
+		outputs = append(outputs, path.Join(outputsDirectory(a), name+".md"))
+	}
+	fmt.Fprintf(&text, "Write each required output document as complete Markdown to its file: %s. Include any evidence that should be retained. Then return the structured result with your summary (and data or requirements when the schema asks for them); leave artifacts out, because the coordinator reads the files. Submit the structured result once, with real content: the first valid submission ends your turn.\n", strings.Join(outputs, ", "))
 	text.WriteString("Workflow definition:\n" + string(mustJSON(a.Revision.Config.Workflow)) + "\nReadiness:\n" + string(mustJSON(a.Revision.Readiness)) + "\n")
 	if node.Join != nil {
 		parents, err := a.Revision.MergeInputs(a.Attempt.Node)
@@ -345,6 +352,43 @@ func scratchDirectory(a engine.Assignment) string {
 	return "/work/envctl/scratch/" + a.Revision.ID + "/" + a.Attempt.ID
 }
 
+// outputsDirectory holds the worker's output documents, one Markdown file per
+// node output. Documents travel as files because long strings inside a
+// structured tool call are unreliable.
+func outputsDirectory(a engine.Assignment) string { return scratchDirectory(a) + "/outputs" }
+
+const maxOutputDocument = 1 << 20
+
+var outputName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$`)
+
+// readOutput reads one output document as the agent user, so a symlink cannot
+// reach anything the agent could not read itself. A missing file is "".
+func (b *Backend) readOutput(ctx context.Context, a engine.Assignment, name string) (string, error) {
+	if !outputName.MatchString(name) {
+		return "", errors.New("invalid output document name")
+	}
+	program := `import os,sys
+p=sys.argv[1]; limit=int(sys.argv[2])
+try:
+    fd=os.open(p,os.O_RDONLY|os.O_NOFOLLOW)
+except FileNotFoundError:
+    sys.exit(0)
+st=os.fstat(fd)
+if not __import__("stat").S_ISREG(st.st_mode): sys.exit(3)
+if st.st_size>limit: sys.exit(4)
+sys.stdout.buffer.write(os.read(fd,limit+1))`
+	var out, diagnostic bytes.Buffer
+	file := path.Join(outputsDirectory(a), name+".md")
+	err := b.Provider.Exec(ctx, a.Revision.Runtime.ID, vm.Command{Args: []string{"sudo", "-u", "envctl-agent", "python3", "-c", program, file, fmt.Sprint(maxOutputDocument)}, Stdout: &out, Stderr: &diagnostic})
+	if err != nil {
+		return "", errors.New("output document " + name + " must be a regular file of at most 1 MiB")
+	}
+	if out.Len() > maxOutputDocument {
+		return "", errors.New("output document " + name + " exceeds 1 MiB")
+	}
+	return out.String(), nil
+}
+
 func (b *Backend) pollJob(ctx context.Context, a engine.Assignment, r *attemptRecord, id string) (guestjob.Status, error) {
 	status, err := b.guest(a).Poll(ctx, id, r.Cursors[id])
 	if err != nil {
@@ -402,7 +446,7 @@ func (b *Backend) failed(a engine.Assignment, r *attemptRecord, detail string) (
 	if err := b.save(a, r); err != nil {
 		return engine.Observation{}, err
 	}
-	return engine.Observation{State: "failed", Detail: detail, Session: r.Session, Delivered: r.delivered()}, nil
+	return engine.Observation{State: "failed", Detail: detail, Session: r.Session, Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
 }
 
 func (b *Backend) workerFailed(ctx context.Context, a engine.Assignment, r *attemptRecord, detail string) (engine.Observation, error) {
@@ -480,7 +524,7 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 		return engine.Observation{}, err
 	}
 	running := func() (engine.Observation, error) {
-		return engine.Observation{State: "running", Session: r.Session, Progress: b.progress(a, r), Delivered: r.delivered()}, nil
+		return engine.Observation{State: "running", Session: r.Session, Progress: b.progress(a, r), Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
 	}
 	// agentJob reconciles one role's active generation: it finishes stopping a
 	// superseded generation, starts a missing job, records delivery once the
@@ -562,7 +606,17 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 		}
 		r.Result.Requirements = proposal.Requirements
 		for _, name := range node.Outputs {
-			artifact, err := b.artifact(a, name, "text/markdown", []byte(proposal.Artifacts[name]))
+			content, err := b.readOutput(ctx, a, name)
+			if err != nil {
+				return engine.Observation{}, err
+			}
+			if strings.TrimSpace(content) == "" {
+				content = proposal.Artifacts[name]
+			}
+			if strings.TrimSpace(content) == "" {
+				return b.workerFailed(ctx, a, r, "output document "+name+" is missing: write it to "+path.Join(outputsDirectory(a), name+".md"))
+			}
+			artifact, err := b.artifact(a, name, "text/markdown", []byte(content))
 			if err != nil {
 				return engine.Observation{}, err
 			}
@@ -768,11 +822,11 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 		if err = b.save(a, r); err != nil {
 			return engine.Observation{}, err
 		}
-		return engine.Observation{State: "completed", Result: &r.Result, Session: r.Session, Delivered: r.delivered()}, nil
+		return engine.Observation{State: "completed", Result: &r.Result, Session: r.Session, Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
 	case "completed":
-		return engine.Observation{State: "completed", Result: &r.Result, Session: r.Session, Delivered: r.delivered()}, nil
+		return engine.Observation{State: "completed", Result: &r.Result, Session: r.Session, Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
 	case "failed":
-		return engine.Observation{State: "failed", Detail: r.Detail, Session: r.Session, Delivered: r.delivered()}, nil
+		return engine.Observation{State: "failed", Detail: r.Detail, Session: r.Session, Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
 	default:
 		return engine.Observation{}, errors.New("unknown durable attempt phase")
 	}

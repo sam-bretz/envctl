@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/sam-bretz/envctl/internal/agent"
@@ -37,6 +39,7 @@ type Backend struct {
 	Provider     vm.Provider
 	Capabilities Capabilities
 	memo         activityMemo
+	probeMu      sync.Mutex
 	clock        func() time.Time // stall timing; tests substitute a fixed clock
 	previews     previewState
 }
@@ -289,6 +292,7 @@ func (b *Backend) readiness(ctx context.Context, a engine.Assignment, capabiliti
 		passed := false
 		detail := "capability has no prepared invocation binding"
 		var err error
+		var probeUsage *workflow.Usage
 		switch capability {
 		case "repositories.readwrite":
 			_, err = b.worktrees(ctx, a, "readiness", pins)
@@ -346,6 +350,9 @@ func (b *Backend) readiness(ctx context.Context, a engine.Assignment, capabiliti
 				role = "supervisor"
 			}
 			passed, detail, err = b.harnessProbe(ctx, a, role, now)
+			if u, usageErr := b.probeUsage(a, role); usageErr == nil && !u.IsZero() {
+				probeUsage = &u
+			}
 		default:
 			if b.Capabilities != nil {
 				passed, detail, err = b.Capabilities.Probe(ctx, a, capability)
@@ -361,7 +368,7 @@ func (b *Backend) readiness(ctx context.Context, a engine.Assignment, capabiliti
 		if e != nil {
 			return nil, e
 		}
-		probes = append(probes, workflow.Probe{Capability: capability, Binding: "local:" + capability, ConfigDigest: workflow.Digest(a.Revision.Config), RuntimeID: a.Revision.Runtime.ID, Passed: passed, Detail: detail, EvidenceDigest: evidence.Digest, CheckedAt: now, ExpiresAt: now.Add(2 * time.Minute)})
+		probes = append(probes, workflow.Probe{Usage: probeUsage, Capability: capability, Binding: "local:" + capability, ConfigDigest: workflow.Digest(a.Revision.Config), RuntimeID: a.Revision.Runtime.ID, Passed: passed, Detail: detail, EvidenceDigest: evidence.Digest, CheckedAt: now, ExpiresAt: now.Add(2 * time.Minute)})
 	}
 	return probes, nil
 }
@@ -427,12 +434,75 @@ func (b *Backend) harnessProbe(ctx context.Context, a engine.Assignment, role st
 		}
 		return false, "harness connection probe has not completed successfully", nil
 	}
+	if err = b.recordProbeUsage(a, id, harness.Usage(status.Output)); err != nil {
+		return false, "harness probe usage could not be recorded", err
+	}
 	raw, err := harness.Result(ctx, id)
 	if err != nil {
 		return false, "harness probe result is unavailable", err
 	}
 	result, err := agent.ParseAssessment(clean(a, raw))
 	return err == nil && result.Accepted, "harness authenticated and returned its structured probe response", err
+}
+
+// Probe usage is cumulative per revision: each completed probe job is
+// recorded once, keyed by its job ID, in a coordinator-owned receipt.
+func (b *Backend) probeUsagePath(a engine.Assignment) (string, error) {
+	dir, err := b.dir(a)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "probe-usage.json"), nil
+}
+
+func (b *Backend) loadProbeUsage(a engine.Assignment) (map[string]workflow.Usage, error) {
+	path, err := b.probeUsagePath(a)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]workflow.Usage{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	usage := map[string]workflow.Usage{}
+	if json.Unmarshal(raw, &usage) != nil {
+		return nil, errors.New("invalid probe usage receipt")
+	}
+	return usage, nil
+}
+
+func (b *Backend) recordProbeUsage(a engine.Assignment, job string, u workflow.Usage) error {
+	b.probeMu.Lock()
+	defer b.probeMu.Unlock()
+	usage, err := b.loadProbeUsage(a)
+	if err != nil {
+		return err
+	}
+	if _, done := usage[job]; done || u.IsZero() {
+		return nil
+	}
+	usage[job] = u
+	path, err := b.probeUsagePath(a)
+	if err != nil {
+		return err
+	}
+	return atomicJSON(path, usage)
+}
+
+func (b *Backend) probeUsage(a engine.Assignment, role string) (workflow.Usage, error) {
+	b.probeMu.Lock()
+	defer b.probeMu.Unlock()
+	usage, err := b.loadProbeUsage(a)
+	var total workflow.Usage
+	for job, u := range usage {
+		if strings.Contains(job, "_"+role+"_") {
+			total = total.Add(u)
+		}
+	}
+	return total, err
 }
 
 func (b *Backend) Release(ctx context.Context, a engine.Assignment) error {

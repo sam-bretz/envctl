@@ -85,7 +85,7 @@ func (b *Backend) watchStall(a engine.Assignment, r *attemptRecord, role, logs s
 	if harness, err := agent.SelectVersion(h.Kind, h.Version, b.guest(a)); err == nil {
 		lines = b.activity(current.ID, logs, harness.Activity)
 	}
-	if !s.Extended && agent.CommandInFlight(lines) {
+	if !s.Extended && (agent.CommandInFlight(lines) || agent.Composing(logs)) {
 		s.Extended = true
 		return false, b.save(a, r)
 	}

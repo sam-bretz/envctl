@@ -241,7 +241,9 @@ func (c Codex) Start(ctx context.Context, i Invocation, credential Credential) (
 	if credential.APIKey == "" && credential.AccessToken == "" {
 		return guestjob.Status{}, errors.New("Codex connection is not ready: " + codexCredentialHelp)
 	}
-	schema, err := json.Marshal(i.Schema)
+	// Codex structured output requires every property; optional fields are
+	// returned empty, which still satisfies the shared contract.
+	schema, err := json.Marshal(StrictSchema(i.Schema))
 	if err != nil {
 		return guestjob.Status{}, err
 	}

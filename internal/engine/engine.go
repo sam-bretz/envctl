@@ -36,6 +36,8 @@ type Observation struct {
 	// lists user messages already submitted to an agent invocation.
 	Progress  *workflow.Progress
 	Delivered []workflow.Delivery
+	// Usage is the attempt's cumulative agent usage so far.
+	Usage *workflow.Usage
 }
 
 // All backend effects must be idempotent by revision/attempt ID. Poll must
@@ -283,7 +285,21 @@ func (e *Engine) Reconcile(ctx context.Context, id, revision string) error {
 	if rev.State != "active" && rev.State != "draining" {
 		return nil
 	}
-	if rev.ReadinessCheckedAt.IsZero() || e.now().Sub(rev.ReadinessCheckedAt) >= 30*time.Second {
+	// At the run's usage ceiling, stop every running agent. The backend's
+	// failure path keeps their unfinished source, and nothing new starts.
+	// Work already finished (awaiting approval) can still be approved.
+	overBudget, budgetReason := run.Budget()
+	if overBudget {
+		for i := range rev.Attempts {
+			if rev.Attempts[i].State == "running" {
+				if err := e.Backend.Cancel(ctx, assign(run, rev, &rev.Attempts[i])); err != nil {
+					return e.recover(ctx, id, revision, "token-budget", err)
+				}
+			}
+		}
+	}
+	// Readiness probes can invoke models, so they stop at the ceiling too.
+	if !overBudget && (rev.ReadinessCheckedAt.IsZero() || e.now().Sub(rev.ReadinessCheckedAt) >= 30*time.Second) {
 		probes, err := e.Backend.Readiness(ctx, assign(run, rev, nil))
 		if err != nil {
 			return e.recover(ctx, id, revision, "readiness", err)
@@ -312,6 +328,12 @@ func (e *Engine) Reconcile(ctx context.Context, id, revision string) error {
 				v.Runtime = *runtime
 			}
 			for _, p := range probes {
+				if p.Usage != nil {
+					if v.ProbeUsage == nil {
+						v.ProbeUsage = map[string]workflow.Usage{}
+					}
+					v.ProbeUsage[p.Capability] = *p.Usage
+				}
 				v.SetProbe(p)
 			}
 			v.ReadinessCheckedAt = e.now()
@@ -371,6 +393,19 @@ func (e *Engine) Reconcile(ctx context.Context, id, revision string) error {
 				})
 				return err
 			}
+		}
+		if overBudget && len(ready) > 0 {
+			if err := e.recover(ctx, id, revision, "token-budget", errors.New(budgetReason+"; raise it with envctl run rewind --config, or cancel the run")); err != nil {
+				return err
+			}
+			_, err = e.update(ctx, id, revision, "run.needs-attention", func(_ *workflow.Run, v *workflow.Revision) error {
+				if v.State != "active" && v.State != "draining" {
+					return workflow.ErrConflict
+				}
+				v.State = "needs-attention"
+				return nil
+			})
+			return err
 		}
 		for _, node := range ready {
 			_, err = e.update(ctx, id, revision, "attempt.started", func(r *workflow.Run, v *workflow.Revision) error {

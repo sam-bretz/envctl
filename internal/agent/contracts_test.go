@@ -11,8 +11,13 @@ func TestWorkerCannotClaimAuthoritativeEvidence(t *testing.T) {
 	if _, err := ParseProposal(good, node); err != nil {
 		t.Fatal(err)
 	}
+	// Output documents may arrive as files the backend reads, so the result
+	// need not carry them; the backend refuses a stage with neither.
+	if _, err := ParseProposal([]byte(`{"summary":"Done","data":{"count":1}}`), node); err != nil {
+		t.Fatal("result without inline documents rejected:", err)
+	}
 	for _, raw := range []string{
-		`{"summary":"Done","artifacts":{},"data":{"count":1}}`,
+		`{"summary":"Done","artifacts":{"unknown":"x"},"data":{"count":1}}`,
 		`{"summary":"Done","artifacts":{"implementation":"notes"},"data":{"count":0}}`,
 		`{"summary":"Done","artifacts":{"implementation":"notes"},"data":{"count":1},"commits":{"app":"claimed"}}`,
 		`{"summary":"Done","artifacts":{"implementation":"notes"},"data":{"count":1},"checks":[{"passed":true}]}`,
@@ -30,6 +35,38 @@ func TestSupervisorContractIncludesCorrection(t *testing.T) {
 	}
 	if _, err = ParseAssessment([]byte(`{"accepted":true}`)); err == nil {
 		t.Fatal("accepted a claim without review evidence")
+	}
+	// An approval has no correction; models omit the empty field.
+	if r, err = ParseAssessment([]byte(`{"accepted":true,"summary":"Verified"}`)); err != nil || !r.Accepted {
+		t.Fatal("approval without correction rejected:", err)
+	}
+	if r, err = ParseAssessment([]byte(`{"accepted":false,"summary":"The empty-input test is missing"}`)); err != nil || r.Correction != "The empty-input test is missing" {
+		t.Fatal("rejection without correction lost its reason:", r, err)
+	}
+}
+
+func TestStrictSchemaRequiresEveryPropertyAndKeepsStrictSchemas(t *testing.T) {
+	node := workflow.Node{Kind: "plan", Outputs: []string{"plan"}}
+	strict := StrictSchema(ProposalSchema(node))
+	if got := strict["required"].([]string); len(got) != 4 || got[0] != "summary" || got[1] != "data" {
+		t.Fatalf("root required %v", got)
+	}
+	artifacts := strict["properties"].(map[string]any)["artifacts"].(map[string]any)
+	if got := artifacts["required"].([]string); len(got) != 1 || got[0] != "plan" {
+		t.Fatalf("artifacts required %v", got)
+	}
+	items := strict["properties"].(map[string]any)["requirements"].(map[string]any)["items"].(map[string]any)
+	if got := items["required"].([]string); len(got) != 3 {
+		t.Fatalf("requirement items required %v", got)
+	}
+	// A schema that already requires everything is unchanged, so reconnecting
+	// to an in-flight Codex job writes identical bytes.
+	legacy := map[string]any{"type": "object", "required": []string{"summary", "artifacts"}, "properties": map[string]any{"summary": map[string]any{"type": "string"}, "artifacts": map[string]any{"type": "object", "required": []string{}, "properties": map[string]any{}}}}
+	if a, b := workflow.Digest(StrictSchema(legacy)), workflow.Digest(legacy); a != b {
+		t.Fatal("strict schema changed an already-strict schema")
+	}
+	if _, ok := ProposalSchema(node)["properties"].(map[string]any)["artifacts"].(map[string]any)["required"]; ok {
+		t.Fatal("StrictSchema mutated its input")
 	}
 }
 

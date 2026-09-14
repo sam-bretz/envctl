@@ -404,6 +404,8 @@ func readinessCommits(a engine.Assignment) (map[string]string, error) {
 func mustJSON(v any) []byte { raw, _ := json.Marshal(v); return raw }
 
 func (b *Backend) harnessProbe(ctx context.Context, a engine.Assignment, role string, now time.Time) (bool, string, error) {
+	// Readiness probes have no node in scope, so they always use the
+	// run-wide agents.<role>.model, never a per-node override.
 	h := a.Revision.Config.Agents.Worker
 	if role == "supervisor" {
 		h = a.Revision.Config.Agents.Supervisor

@@ -61,6 +61,7 @@ func (m *Model) beginInput(mode string) {
 		m.InputNode = m.nodeID()
 	}
 }
+
 // approvalStatus explains why nothing can be approved. Approved work that
 // has not published yet says so, including a publication failure the
 // coordinator is retrying, which a rewind to the stage may be needed to clear.

@@ -55,9 +55,9 @@ type Model struct {
 	// cycles NewWorkflow through them.
 	Workflows   []string
 	NewWorkflow string
-	CompareRun      string
-	CompareFrom     string
-	DiffRequest     string
+	CompareRun  string
+	CompareFrom string
+	DiffRequest string
 	// Theme is empty until the terminal reports its capabilities, so piped and
 	// non-interactive rendering stays free of escape sequences.
 	Theme theme

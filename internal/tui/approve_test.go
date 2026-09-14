@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/sam-bretz/envctl/internal/workflow"
 )
 
@@ -28,7 +29,11 @@ func TestApproveKeyNeverApprovesAnUnviewedStage(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("second press did not approve")
 	}
-	cmd()
+	next, _ := m.Update(cmd())
+	m = next.(Model)
+	if m.Notice != "Approved approved-change; publishing it now" {
+		t.Fatalf("approval notice %q", m.Notice)
+	}
 	if api.request.Action != "approve" || api.request.Attempt != "attempt_change" || api.request.WorkDigest != result.WorkDigest() {
 		t.Fatalf("approval request %+v", api.request)
 	}
@@ -37,9 +42,18 @@ func TestApproveKeyNeverApprovesAnUnviewedStage(t *testing.T) {
 	v = m.Runs[0].Current()
 	v.Attempts[len(v.Attempts)-1].State = "verifying"
 	v.Attempts[len(v.Attempts)-1].Approval = &workflow.Approval{Actor: "local", ResultDigest: result.WorkDigest()}
-	v.Recovery = &workflow.Recovery{Phase: "publication", Detail: "destination base changed; approval must follow revalidated QA"}
+	if view := ansi.Strip(m.View().Content); !strings.Contains(view, "approved-change approved, publishing") {
+		t.Fatalf("approved work shown as plain verifying:\n%s", view)
+	}
+	v.Recovery = &workflow.Recovery{Phase: "publication", Detail: "main moved on GitHub after this run planned"}
+	view := ansi.Strip(m.View().Content)
+	for _, want := range []string{"approved-change approved, not published", "Approved, but the pull request was not opened: main moved", "Next: select approved-change, press r"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("view does not show %q:\n%s", want, view)
+		}
+	}
 	m, cmd = key(m, "a")
-	if cmd != nil || !strings.Contains(m.Error, "already approved, but publishing failed: destination base changed") || !strings.Contains(m.Error, "press r") {
+	if cmd != nil || !strings.Contains(m.Error, "already approved, but publishing failed: main moved") || !strings.Contains(m.Error, "press r") {
 		t.Fatalf("no explanation for approved work that cannot publish: %q", m.Error)
 	}
 

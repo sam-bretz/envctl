@@ -52,4 +52,9 @@ func TestApproveDefaultsToTheSingleWaitingResult(t *testing.T) {
 	if err = defaultApproval(&req, run); err == nil || !strings.Contains(err.Error(), "publishing failed: destination base changed") || !strings.Contains(err.Error(), "envctl run rewind "+run.ID+" --to approved-change") {
 		t.Fatalf("publication failure not explained: %v", err)
 	}
+	var out strings.Builder
+	printAttention(&out, run)
+	if !strings.Contains(out.String(), "approved-change is approved, but the pull request was not opened: destination base changed") || !strings.Contains(out.String(), "next: envctl run rewind "+run.ID+" --to approved-change") {
+		t.Fatalf("run show does not explain the blocked publication:\n%s", out.String())
+	}
 }

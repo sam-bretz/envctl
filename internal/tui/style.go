@@ -146,8 +146,10 @@ func (t theme) stageLook(state string, frame int) (string, color.Color) {
 	case "running":
 		spinner := []string{"◐", "◓", "◑", "◒"}
 		return spinner[frame%len(spinner)], t.accent()
-	case "verifying":
+	case "verifying", "approved, publishing":
 		return "◍", t.accent()
+	case "approved, not published":
+		return "✖", t.danger()
 	case "awaiting-approval":
 		return "◆", t.warn()
 	case "recovering":

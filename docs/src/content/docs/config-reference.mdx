@@ -88,6 +88,39 @@ Every rendered service carries:
 
 Keys are `project/service/containerPort`. `envctl down -v` removes a project's entries. Deleting the file is safe; ports are reallocated on the next render.
 
+## Workflows (version 2, experimental)
+
+`workflow` is the default workflow every run uses. `workflows` adds named workflows a run can pick instead. Each entry takes the same keys as `workflow`: a `template`, and `nodes` that merge into it.
+
+```yaml
+workflow:
+  template: feature
+  nodes:
+    qa:
+      checks: &checks
+        - name: unit
+          command: [npm, test]
+workflows:
+  small:
+    template: small
+    nodes:
+      build:
+        checks: *checks
+```
+
+| Template | Stages | Notes |
+| --- | --- | --- |
+| `feature` | Task → Plan → Design → Code → QA → Approved change | Checks go on `qa`. |
+| `small` | Plan → Build → Approved change | For small changes. Build implements the change and runs the checks, so `build` needs `checks`. |
+
+Rules for every workflow:
+
+- There is exactly one Plan stage. Task is optional; without it, Plan is the first stage.
+- An approved change needs a QA stage or a stage with `checks` before it. That stage's passing checks, for the exact commits being published, are what the pull request is opened from. A workflow without one is rejected when it is loaded.
+- Workflow names are lowercase identifiers. `default` is reserved for the `workflow` section.
+
+Pick a workflow with `envctl run create --workflow small`, with `tab` in the dashboard's new-run input, or with the `workflow` argument of the MCP `envctl_create` tool. `envctl run workflows` lists them with their stages. A run stores only the workflow it selected, and a rewind with `--config` keeps using that workflow.
+
 ## Workflow limits (version 2, experimental)
 
 Version 2 workflow configurations set revision-wide limits under `limits`. A workflow node can override the attempt budget for its own assignments under `workflow.nodes.<id>.limits`. See the [workflow runtime design](/envctl/design/workflow-runtime/#child-runtimes-for-parallel-execution).

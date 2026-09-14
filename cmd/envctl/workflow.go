@@ -187,10 +187,10 @@ func runCmd(g *globals) *cobra.Command {
 	c.AddCommand(runArtifactCmd(g))
 	c.AddCommand(runDiffCmd(g))
 	c.AddCommand(runPRCmd(g))
-	var task, name, taskRef, op string
+	var task, name, taskRef, op, selected string
 	var pluginFiles []string
 	create := &cobra.Command{Use: "create", Short: "Create a workflow invocation from this repository", RunE: func(cmd *cobra.Command, args []string) error {
-		config, err := workflow.Load(workflowRoot(cmd.Context(), g.dir))
+		config, err := loadWorkflow(cmd.Context(), g, selected)
 		if err != nil {
 			return err
 		}
@@ -224,13 +224,24 @@ func runCmd(g *globals) *cobra.Command {
 	create.Flags().StringVar(&taskRef, "task-ref", "", "issue or story URL")
 	create.Flags().StringVar(&op, "operation-id", "", "idempotency key for retried creation")
 	create.Flags().StringArrayVar(&pluginFiles, "plugin-file", nil, "invocation plugin reference YAML (repeatable)")
+	create.Flags().StringVar(&selected, "workflow", "", "named workflow from envctl.yaml (see envctl run workflows)")
 	c.AddCommand(create)
-	c.AddCommand(&cobra.Command{Use: "validate", Short: "Validate workflow configuration and DAG without starting a runtime", RunE: func(cmd *cobra.Command, args []string) error {
-		config, err := workflow.Load(workflowRoot(cmd.Context(), g.dir))
+	var validated string
+	validate := &cobra.Command{Use: "validate", Short: "Validate workflow configuration and DAG without starting a runtime", RunE: func(cmd *cobra.Command, args []string) error {
+		config, err := loadWorkflow(cmd.Context(), g, validated)
 		if err != nil {
 			return err
 		}
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(config)
+	}}
+	validate.Flags().StringVar(&validated, "workflow", "", "named workflow to validate")
+	c.AddCommand(validate)
+	c.AddCommand(&cobra.Command{Use: "workflows", Short: "List the workflows a run can use", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		config, err := workflow.Load(workflowRoot(cmd.Context(), g.dir))
+		if err != nil {
+			return err
+		}
+		return printWorkflows(cmd.OutOrStdout(), g.jsonOut, config)
 	}})
 	c.AddCommand(&cobra.Command{Use: "list", Short: "List workflow runs", RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := connect(cmd.Context(), g)
@@ -392,6 +403,10 @@ func runActionCmd(g *globals, action string) *cobra.Command {
 				return err
 			}
 			config.Dir = filepath.Dir(path)
+			// A rewind keeps the workflow the run was created with.
+			if config, err = config.SelectWorkflow(run.Current().Config.WorkflowName); err != nil {
+				return err
+			}
 			req.Config = &config
 		}
 		result, err := client.Action(cmd.Context(), run.ID, req)
@@ -436,7 +451,7 @@ func printRun(cmd *cobra.Command, g *globals, r *workflow.Run) error {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(r)
 	}
 	out := cmd.OutOrStdout()
-	if _, err := fmt.Fprintf(out, "%s  %s  %s\n  %s\n  %s\n", r.ID, r.Name, r.Current().State, r.Description, r.UsageSummary()); err != nil {
+	if _, err := fmt.Fprintf(out, "%s  %s  %s\n  %s\n  workflow %s · %s\n", r.ID, r.Name, r.Current().State, r.Description, r.Current().Config.DisplayWorkflowName(), r.UsageSummary()); err != nil {
 		return err
 	}
 	rev := r.Current()

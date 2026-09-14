@@ -13,6 +13,16 @@ envctl [-C PATH] [--env NAME] [--backend local] [--port-mode domains|registry] [
 
 `-C PATH` operates on the worktree containing `PATH` instead of the current directory. `--env NAME` names the environment instead of deriving it from the branch; the value is slugified. `--feature` is a deprecated alias. `--backend` accepts `local` today. `--port-mode` overrides `ports.mode` from the manifest for this invocation. `--json` switches output to JSON on every command that reports something.
 
+## Experimental workflow selection
+
+```bash
+envctl run workflows
+envctl run create --task "Add a --json flag to envctl version" --workflow small
+envctl run validate --workflow small
+```
+
+`run workflows` lists the default workflow and each named workflow in `envctl.yaml` with its stages; `--json` returns the same list. `run create --workflow` and `run validate --workflow` select one by name, and an unknown name lists the choices. In the dashboard's new-run input (`n`), `tab` and `shift+tab` cycle the workflow. `run show` and the dashboard name each run's workflow. See [Workflows](/envctl/config-reference/#workflows-version-2-experimental).
+
 ## Experimental workflow review
 
 Version 2 workflow state belongs to its persistent coordinator. These commands inspect retained evidence without starting a worker or requiring the run's VM:

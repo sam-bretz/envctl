@@ -57,6 +57,7 @@ type createInput struct {
 	Owner       string `json:"owner"`
 	ConfigYAML  string `json:"config_yaml" jsonschema:"Complete version 2 workflow YAML"`
 	Directory   string `json:"directory" jsonschema:"Absolute project directory for resolving configuration paths"`
+	Workflow    string `json:"workflow,omitempty" jsonschema:"Named workflow from the configuration's workflows section; default when omitted"`
 }
 type actionInput struct {
 	Run             string              `json:"run"`
@@ -158,6 +159,9 @@ func New(api API, options Options) *mcp.Server {
 				return nil, nil, errors.New("project directory must be absolute")
 			}
 			config, err := parseConfig(in.ConfigYAML, in.Directory)
+			if err == nil {
+				config, err = config.SelectWorkflow(in.Workflow)
+			}
 			if err != nil {
 				return nil, nil, err
 			}
@@ -191,6 +195,10 @@ func New(api API, options Options) *mcp.Server {
 				return nil, nil, errors.New("requested revision does not exist")
 			}
 			config, err := parseConfig(in.ConfigYAML, revision.Config.Dir)
+			if err == nil {
+				// A rewind keeps the workflow the run was created with.
+				config, err = config.SelectWorkflow(revision.Config.WorkflowName)
+			}
 			if err != nil {
 				return nil, nil, err
 			}

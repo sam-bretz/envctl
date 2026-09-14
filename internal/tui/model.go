@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -50,6 +51,10 @@ type Model struct {
 	InputRun        string
 	InputRevision   string
 	InputNode       string
+	// Workflows lists the workflows the new-run input can select; tab
+	// cycles NewWorkflow through them.
+	Workflows   []string
+	NewWorkflow string
 	CompareRun      string
 	CompareFrom     string
 	DiffRequest     string
@@ -251,6 +256,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc":
 				m.Mode = ""
 				m.Input = ""
+			case "tab", "shift+tab":
+				if m.Mode == "new" && len(m.Workflows) > 1 {
+					step := 1
+					if key == "shift+tab" {
+						step = len(m.Workflows) - 1
+					}
+					m.NewWorkflow = m.Workflows[(slices.Index(m.Workflows, m.NewWorkflow)+step)%len(m.Workflows)]
+				}
 			case "backspace":
 				runes := []rune(m.Input)
 				if len(runes) > 0 {
@@ -287,11 +300,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.act(daemon.ActionRequest{Action: "plugin-remove", PluginID: body})
 				}
 				if mode == "new" {
-					api, root := m.API, m.Root
+					api, root, selected := m.API, m.Root, m.NewWorkflow
 					return m, func() tea.Msg {
 						c, err := workflow.Load(root)
 						if errors.Is(err, os.ErrNotExist) {
 							return actionMsg{err: fmt.Errorf("no envctl.yaml in %s; add a version 2 workflow configuration (see https://sam-bretz.github.io/envctl/first-workflow/)", root)}
+						}
+						if err == nil {
+							c, err = c.SelectWorkflow(selected)
 						}
 						if err != nil {
 							return actionMsg{err: fmt.Errorf("workflow configuration: %w", err)}
@@ -375,6 +391,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.beginInput("chat")
 		case "n":
 			m.beginInput("new")
+			m.loadWorkflows()
 		case "p":
 			m.beginInput("plugin file (reopens Plan)")
 		case "P":
@@ -653,6 +670,9 @@ func (m Model) header(width int) []chrome {
 	if r := m.current(); r != nil {
 		rev := m.viewRevision()
 		summary := t.bold().Render(clean(r.Name)) + t.dim().Render(" · "+rev.State+" · "+rev.ID+m.revisionLabel())
+		if name := rev.Config.WorkflowName; name != "" {
+			summary += t.dim().Render(" · " + clean(name) + " workflow")
+		}
 		usage := t.dim()
 		switch fraction := r.UsageFraction(); {
 		case fraction >= 1:
@@ -687,10 +707,14 @@ func (m Model) footer(width int, compact bool) []string {
 	lines := []string{ansi.Truncate(info, width, "…")}
 	if m.Mode != "" {
 		input := clean(m.Input) + t.fg(t.accent()).Render("▌")
+		label := m.Mode
+		if m.Mode == "new" && len(m.Workflows) > 1 {
+			label = "new · " + clean(m.NewWorkflow) + " workflow (tab to change)"
+		}
 		if compact || width < 24 {
-			lines = append(lines, ansi.Truncate(t.bold().Render(m.Mode+" ")+input, width, ""))
+			lines = append(lines, ansi.Truncate(t.bold().Render(label+" ")+input, width, ""))
 		} else {
-			lines = append(lines, t.box(m.Mode, []string{input}, width)...)
+			lines = append(lines, t.box(label, []string{input}, width)...)
 		}
 	} else {
 		prompt := t.dim().Render("To ") + t.fg(t.accent()).Render(m.Recipient) +

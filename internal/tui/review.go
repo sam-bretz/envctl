@@ -61,6 +61,15 @@ func (m *Model) beginInput(mode string) {
 		m.InputNode = m.nodeID()
 	}
 }
+// loadWorkflows offers the repository's workflows to the new-run input. A
+// missing or invalid configuration leaves only the default; creating the run
+// reports the configuration problem.
+func (m *Model) loadWorkflows() {
+	m.Workflows, m.NewWorkflow = []string{workflow.DefaultWorkflow}, workflow.DefaultWorkflow
+	if c, err := workflow.Load(m.Root); err == nil {
+		m.Workflows = c.WorkflowNames()
+	}
+}
 func (m *Model) moveRevision(delta int) {
 	r := m.current()
 	if r == nil {

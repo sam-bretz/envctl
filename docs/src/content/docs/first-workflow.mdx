@@ -89,6 +89,7 @@ The dashboard shows the stage strip, your in-flight runs, and a focused panel:
 | `o` | Open the selected artifact; `,` and `.` select |
 | `[` `]` | Browse revision history |
 | `r` `a` `x` | Rewind, approve, cancel |
+| `g` | Open the run's pull request in your browser |
 | `T` | Pick a color theme, with live preview |
 | `q` | Detach; execution continues |
 
@@ -156,6 +157,8 @@ envctl run approve <run>
 With one change awaiting approval, that approves the result `envctl run show` displays. Pass `--digest` to pin the exact result you reviewed.
 
 envctl then pushes a revision branch and opens a draft pull request whose body lists the validated commits and the QA evidence. If the change adds Git LFS files or moves a submodule, those objects are published first, and the pull request says which submodule pull requests must merge first.
+
+Press `g` in the dashboard, or run `envctl run pr <run> --open`, to open the pull request in your browser. Without `--open` the command prints the link.
 
 To stop a run and release its VM:
 

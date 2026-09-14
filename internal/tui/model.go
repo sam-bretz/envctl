@@ -60,6 +60,8 @@ type Model struct {
 	// ConfigPath receives theme choices saved from the picker; empty skips saving.
 	ConfigPath string
 	Picker     *themePicker
+	// OpenURL opens a link in the user's browser; tests substitute it.
+	OpenURL func(string) error
 	// refreshFailed marks Error as a refresh failure, the only kind a later
 	// successful refresh may clear. Action errors stay until the next action.
 	refreshFailed bool
@@ -83,6 +85,11 @@ type diffMsg struct {
 	err        error
 }
 type tickMsg time.Time
+type openedMsg struct {
+	urls  int
+	first string
+	err   error
+}
 
 var panels = []string{"Conversation", "Checkpoint", "Changes", "Tests", "Services", "Readiness", "Graph", "History"}
 
@@ -205,6 +212,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.BackgroundColorMsg:
 		m.Theme.dark = v.IsDark()
 		m.Theme.resolve()
+	case openedMsg:
+		if v.err != nil {
+			m.Error = "could not open the pull request: " + v.err.Error()
+		} else if v.urls == 1 {
+			m.Error, m.Notice = "", "Opened "+v.first
+		} else {
+			m.Error, m.Notice = "", fmt.Sprintf("Opened %d pull requests", v.urls)
+		}
 	case tickMsg:
 		m.Frame++
 		return m, tea.Batch(m.refresh(), tick())
@@ -297,6 +312,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.clearArtifact()
 		case "T":
 			m.openPicker()
+		case "g":
+			r := m.current()
+			if r == nil {
+				break
+			}
+			prs := r.PullRequests()
+			if len(prs) == 0 {
+				m.Notice = ""
+				m.Error = "no pull request yet; the approved change opens one after approval"
+				break
+			}
+			open := m.OpenURL
+			if open == nil {
+				open = OpenInBrowser
+			}
+			return m, func() tea.Msg {
+				for _, pr := range prs {
+					if err := open(pr.URL); err != nil {
+						return openedMsg{err: err}
+					}
+				}
+				return openedMsg{urls: len(prs), first: prs[0].URL}
+			}
 		case "q":
 			return m, tea.Quit
 		case "j", "down":
@@ -662,7 +700,7 @@ func (m Model) footer(width int, compact bool) []string {
 		}
 		lines = append(lines, ansi.Truncate(prompt, width, ""))
 	}
-	navigation := "↑/↓ runs  ←/→ stages  tab views  pgup/pgdn scroll  s recipient  [/] history  ,/. artifacts  T theme  q detach"
+	navigation := "↑/↓ runs  ←/→ stages  tab views  pgup/pgdn scroll  s recipient  [/] history  ,/. artifacts  g open PR  T theme  q detach"
 	if compact {
 		navigation = "tab views · q detach"
 	}

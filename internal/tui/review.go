@@ -61,6 +61,22 @@ func (m *Model) beginInput(mode string) {
 		m.InputNode = m.nodeID()
 	}
 }
+
+// approvalStatus explains why nothing can be approved. Approved work that
+// has not published yet says so, including a publication failure the
+// coordinator is retrying, which a rewind to the stage may be needed to clear.
+func approvalStatus(v *workflow.Revision) string {
+	a := v.ApprovedUnpublished()
+	switch {
+	case a == nil:
+		return "nothing in this run is awaiting approval"
+	case v.Recovery != nil && v.Recovery.Phase == "publication":
+		return a.Node + " is already approved, but publishing failed: " + v.Recovery.Detail + ". The coordinator retries; if the failure cannot clear (for example the base branch moved), press r on " + a.Node + " to rewind, then approve again."
+	default:
+		return a.Node + " is already approved and is publishing"
+	}
+}
+
 // loadWorkflows offers the repository's workflows to the new-run input. A
 // missing or invalid configuration leaves only the default; creating the run
 // reports the configuration problem.

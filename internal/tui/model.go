@@ -55,9 +55,9 @@ type Model struct {
 	// cycles NewWorkflow through them.
 	Workflows   []string
 	NewWorkflow string
-	CompareRun      string
-	CompareFrom     string
-	DiffRequest     string
+	CompareRun  string
+	CompareFrom string
+	DiffRequest string
 	// Theme is empty until the terminal reports its capabilities, so piped and
 	// non-interactive rendering stays free of escape sequences.
 	Theme theme
@@ -76,8 +76,9 @@ type snapshotMsg struct {
 	err  error
 }
 type actionMsg struct {
-	run *workflow.Run
-	err error
+	run    *workflow.Run
+	err    error
+	notice string // replaces the generic "Saved"
 }
 type artifactMsg struct {
 	key  string
@@ -150,7 +151,7 @@ func (m Model) act(req daemon.ActionRequest) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		r, err := m.API.Action(ctx, id, req)
-		return actionMsg{r, err}
+		return actionMsg{run: r, err: err}
 	}
 }
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -189,6 +190,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Error = v.err.Error()
 		} else {
 			m.Notice = "Saved"
+			if v.notice != "" {
+				m.Notice = v.notice
+			}
 			m.Error = ""
 		}
 		return m, m.refresh()
@@ -315,7 +319,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 						defer cancel()
 						r, err := api.Create(ctx, daemon.CreateRequest{OperationID: workflow.ID("op"), Name: body, Task: body, Owner: "local", Config: c})
-						return actionMsg{r, err}
+						return actionMsg{run: r, err: err}
 					}
 				}
 			default:
@@ -417,7 +421,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						continue
 					}
 					if a.Node == m.nodeID() {
-						return m, m.act(daemon.ActionRequest{Action: "approve", Attempt: a.ID, Actor: "local", WorkDigest: a.Result.WorkDigest()})
+						approve, node := m.act(daemon.ActionRequest{Action: "approve", Attempt: a.ID, Actor: "local", WorkDigest: a.Result.WorkDigest()}), a.Node
+						return m, func() tea.Msg {
+							msg := approve().(actionMsg)
+							msg.notice = "Approved " + node + "; publishing it now"
+							return msg
+						}
 					}
 					waiting = a.Node
 				}
@@ -434,8 +443,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.Error = ""
 					m.Notice = waiting + " is awaiting approval; review it and press a again to approve"
 				} else {
-					m.Notice = ""
-					m.Error = "nothing in this run is awaiting approval"
+					m.Notice, m.Error = "", approvalStatus(r.Current())
 				}
 			}
 		case "[":
@@ -517,9 +525,17 @@ func status(rev *workflow.Revision, node string) string {
 	}
 	for i := len(rev.Attempts) - 1; i >= 0; i-- {
 		a := rev.Attempts[i]
-		if a.Node == node {
-			return a.State
+		if a.Node != node {
+			continue
 		}
+		// Approved work is verified and published in one step; say which.
+		if a.State == "verifying" && a.Approval != nil {
+			if rev.Recovery != nil && rev.Recovery.Phase == "publication" {
+				return "approved, not published"
+			}
+			return "approved, publishing"
+		}
+		return a.State
 	}
 	return "pending"
 }
@@ -685,7 +701,11 @@ func (m Model) header(width int) []chrome {
 			chrome{text: ansi.Truncate(summary, width, "…")},
 			chrome{text: ansi.Truncate(usage.Render(r.UsageSummary()), width, "…")},
 			chrome{text: ansi.Truncate(t.dim().Render(clean(rev.Objective)), width, "…"), optional: true})
-		if rev.Recovery != nil {
+		if a := rev.ApprovedUnpublished(); a != nil && rev.Recovery != nil && rev.Recovery.Phase == "publication" {
+			rows = append(rows,
+				chrome{text: ansi.Truncate(t.fg(t.danger()).Render(clean("Approved, but the pull request was not opened: "+rev.Recovery.Detail)), width, "…")},
+				chrome{text: ansi.Truncate(t.fg(t.warn()).Render(clean("Next: select "+a.Node+", press r and enter to rewind, then approve again. Retrying on its own until then.")), width, "…")})
+		} else if rev.Recovery != nil {
 			text := t.fg(t.warn()).Render(clean("Recovery (" + rev.Recovery.Phase + "): " + rev.Recovery.Detail))
 			rows = append(rows, chrome{text: ansi.Truncate(text, width, "…")})
 		}

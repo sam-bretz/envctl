@@ -340,6 +340,13 @@ func defaultApproval(req *daemon.ActionRequest, run *workflow.Run) error {
 	case len(waiting) == 0 && req.Attempt != "":
 		return fmt.Errorf("attempt %s is not awaiting approval", req.Attempt)
 	case len(waiting) == 0:
+		v := run.Current()
+		if a := v.ApprovedUnpublished(); a != nil {
+			if v.Recovery != nil && v.Recovery.Phase == "publication" {
+				return fmt.Errorf("%s is already approved, but publishing failed: %s; the coordinator retries, and if the failure cannot clear (for example the base branch moved), run envctl run rewind %s --to %s, then approve again", a.Node, v.Recovery.Detail, run.ID, a.Node)
+			}
+			return fmt.Errorf("%s is already approved and is publishing", a.Node)
+		}
 		return errors.New("nothing in this run is awaiting approval")
 	case len(waiting) > 1:
 		var ids []string

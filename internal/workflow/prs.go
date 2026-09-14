@@ -14,6 +14,17 @@ type PullRequest struct {
 	URL string `json:"url"`
 }
 
+// ApprovedUnpublished returns an approved attempt whose publication has not
+// finished, or nil.
+func (v *Revision) ApprovedUnpublished() *Attempt {
+	for i := range v.Attempts {
+		if a := &v.Attempts[i]; a.Approval != nil && a.State == "verifying" {
+			return a
+		}
+	}
+	return nil
+}
+
 // PullRequests lists the pull requests of the run's newest revision that
 // published any, ordered by key. Only GitHub pull request URLs are returned,
 // so a caller can open them safely.

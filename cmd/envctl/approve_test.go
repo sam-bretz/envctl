@@ -42,4 +42,14 @@ func TestApproveDefaultsToTheSingleWaitingResult(t *testing.T) {
 	if err = defaultApproval(&req, run); err != nil || req.Attempt != "attempt_b" {
 		t.Fatalf("explicit attempt: %+v %v", req, err)
 	}
+
+	v.Attempts = []workflow.Attempt{{ID: "attempt_a", Node: "approved-change", State: "verifying", Result: result, Approval: &workflow.Approval{Actor: "dev", ResultDigest: result.WorkDigest()}}}
+	req = daemon.ActionRequest{}
+	if err = defaultApproval(&req, run); err == nil || !strings.Contains(err.Error(), "already approved and is publishing") {
+		t.Fatalf("approved work reported as nothing waiting: %v", err)
+	}
+	v.Recovery = &workflow.Recovery{Phase: "publication", Detail: "destination base changed; approval must follow revalidated QA"}
+	if err = defaultApproval(&req, run); err == nil || !strings.Contains(err.Error(), "publishing failed: destination base changed") || !strings.Contains(err.Error(), "envctl run rewind "+run.ID+" --to approved-change") {
+		t.Fatalf("publication failure not explained: %v", err)
+	}
 }

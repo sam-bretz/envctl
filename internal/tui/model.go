@@ -434,8 +434,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.Error = ""
 					m.Notice = waiting + " is awaiting approval; review it and press a again to approve"
 				} else {
-					m.Notice = ""
-					m.Error = "nothing in this run is awaiting approval"
+					m.Notice, m.Error = "", approvalStatus(r.Current())
 				}
 			}
 		case "[":

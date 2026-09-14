@@ -33,6 +33,16 @@ func TestApproveKeyNeverApprovesAnUnviewedStage(t *testing.T) {
 		t.Fatalf("approval request %+v", api.request)
 	}
 
+	// Approved work that failed to publish says why and how to recover.
+	v = m.Runs[0].Current()
+	v.Attempts[len(v.Attempts)-1].State = "verifying"
+	v.Attempts[len(v.Attempts)-1].Approval = &workflow.Approval{Actor: "local", ResultDigest: result.WorkDigest()}
+	v.Recovery = &workflow.Recovery{Phase: "publication", Detail: "destination base changed; approval must follow revalidated QA"}
+	m, cmd = key(m, "a")
+	if cmd != nil || !strings.Contains(m.Error, "already approved, but publishing failed: destination base changed") || !strings.Contains(m.Error, "press r") {
+		t.Fatalf("no explanation for approved work that cannot publish: %q", m.Error)
+	}
+
 	// With nothing waiting, the key explains itself.
 	m.Runs[0].Current().Attempts = nil
 	m, _ = key(m, "a")

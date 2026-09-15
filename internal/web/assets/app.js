@@ -58,6 +58,23 @@
   const model = (m) => m || 'harness default';
   const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n));
   const usageTokens = (u) => (u.input || 0) + (u.cache_write || 0) + (u.cache_read || 0) + (u.output || 0);
+  // issueLink names a run's linked issue the way its tracker does: a Linear
+  // key like ENG-123, owner/repo#12 for GitHub, or the host otherwise. Only
+  // http and https references become links.
+  function issueLink(ref) {
+    if (!ref) return null;
+    let url;
+    try { url = new URL(ref); } catch { return h('span', { class: 'issue', title: 'Linked issue', text: ref }); }
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return h('span', { class: 'issue', text: ref });
+    let tracker = url.hostname.replace(/^www\./, '');
+    let key = '';
+    const linear = url.hostname.endsWith('linear.app') && url.pathname.match(/\/issue\/([A-Za-z][A-Za-z0-9]*-\d+)/);
+    const github = url.hostname === 'github.com' && url.pathname.match(/^\/([^/]+\/[^/]+)\/(?:issues|pull)\/(\d+)/);
+    if (linear) { tracker = 'Linear'; key = linear[1].toUpperCase(); }
+    else if (github) { tracker = 'GitHub'; key = `${github[1]}#${github[2]}`; }
+    return h('a', { class: 'issue', href: url.href, target: '_blank', rel: 'noopener noreferrer', title: url.href },
+      h('span', { class: 'issue-tracker', text: tracker }), key ? h('span', { text: key }) : null);
+  }
   const plural = (n, word) => `${n} ${n === 1 ? word : word.endsWith('y') ? `${word.slice(0, -1)}ies` : `${word}s`}`;
 
   const STATUS = {
@@ -528,12 +545,12 @@
     if (status.action && !viewingHistory(run)) actions.push(h('button', { type: 'button', class: `btn ${status.action.cls}`, text: status.action.label, onclick: status.action.fn }));
     actions.push(moreMenu(run));
     const meta = [
+      issueLink(run.task_ref),
       h('span', { text: `${rev.workflow === 'default' ? 'Default' : rev.workflow} workflow` }),
       h('span', {}, 'Started ', timeEl(run.created_at)),
       h('span', { text: `${tokens(run.usage.tokens)} tokens` }),
     ];
     if (run.revisions.length > 1) meta.push(h('span', { text: plural(run.revisions.length, 'revision') }));
-    if (run.task_ref) meta.push(h('a', { href: run.task_ref, target: '_blank', rel: 'noopener noreferrer', text: 'Issue' }));
     for (const pr of run.pull_requests) meta.push(h('a', { href: pr.url, target: '_blank', rel: 'noopener noreferrer', text: `Pull request ${pr.url.split('/').pop()}` }));
     const open = $('head').querySelector('details.objective');
     $('head').replaceChildren(

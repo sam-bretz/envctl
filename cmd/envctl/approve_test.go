@@ -58,3 +58,16 @@ func TestApproveDefaultsToTheSingleWaitingResult(t *testing.T) {
 		t.Fatalf("run show does not explain the blocked publication:\n%s", out.String())
 	}
 }
+
+func TestApproveNeedsNoFlagsForTheSingleWaitingAttempt(t *testing.T) {
+	cmd := runActionCmd(&globals{}, "approve")
+	cmd.SetArgs([]string{"run_x"})
+	cmd.SetOut(new(strings.Builder))
+	cmd.SetErr(new(strings.Builder))
+	// Required-flag validation runs before RunE; without the flags the command
+	// must reach RunE, which then fails only because no coordinator is running.
+	err := cmd.ValidateRequiredFlags()
+	if err != nil {
+		t.Fatalf("approve still requires flags: %v", err)
+	}
+}

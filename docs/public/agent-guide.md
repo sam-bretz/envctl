@@ -8,7 +8,7 @@ envctl gives each git worktree its own isolated docker-compose environment. The 
 
 ## Experimental workflows
 
-Version 2 workflows use a persistent coordinator, Bubble Tea, and dedicated local VMs. Use `envctl run validate`, `envctl run create --task ...`, `envctl run readiness <run-id> --json`, and `envctl ui`. Keep existing version 1 configuration and lifecycle commands working when helping users migrate.
+Version 2 workflows use a persistent coordinator, Bubble Tea, and dedicated local VMs. Use `envctl run validate`, `envctl run create --task ...`, `envctl run readiness <run-id> --json`, and `envctl ui` (or `envctl web` for the same dashboard in a browser on this machine; it prints a tokenized loopback link and never listens beyond loopback). Keep existing version 1 configuration and lifecycle commands working when helping users migrate.
 
 `workflow` is the default workflow; `workflows.<name>` adds named ones, listed by `envctl run workflows` and selected with `envctl run create --workflow <name>` (dashboard: `tab` in the `n` input; MCP: `envctl_create` `workflow`). The built-in `small` template is Plan → Build → Approved change, and Build needs `checks`. Suggest it for small, well-scoped changes. Every approved change needs a QA stage or a stage with checks before it.
 

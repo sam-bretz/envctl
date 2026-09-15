@@ -513,32 +513,7 @@ func (m Model) listHeight() int {
 	}
 	return min(len(m.Runs), max(1, min(5, m.Height/5)))
 }
-func status(rev *workflow.Revision, node string) string {
-	if cp, ok := rev.Checkpoints[node]; ok {
-		if cp.HistoricalOnly {
-			return "historical"
-		}
-		return "done"
-	}
-	if child := rev.ChildRuntimes[node]; child != nil && child.Runtime.OccupiesVM() && child.Recovery != nil {
-		return "recovering"
-	}
-	for i := len(rev.Attempts) - 1; i >= 0; i-- {
-		a := rev.Attempts[i]
-		if a.Node != node {
-			continue
-		}
-		// Approved work is verified and published in one step; say which.
-		if a.State == "verifying" && a.Approval != nil {
-			if rev.Recovery != nil && rev.Recovery.Phase == "publication" {
-				return "approved, not published"
-			}
-			return "approved, publishing"
-		}
-		return a.State
-	}
-	return "pending"
-}
+func status(rev *workflow.Revision, node string) string { return rev.StageStatus(node) }
 
 // chrome is one rendered line of the frame around the detail panel. Optional
 // lines are dropped first when the terminal cannot fit the whole frame.

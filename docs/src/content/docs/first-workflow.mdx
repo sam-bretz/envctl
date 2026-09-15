@@ -88,6 +88,17 @@ Add `--workflow small` to use a named workflow instead of the default; `envctl r
 
 This returns immediately with a run ID like `run_8f0c…`. A coordinator starts in the background if one isn't already running, provisions the VM, clones the repository at an exact commit, and starts the first stage. The first run on a machine also downloads the VM image, which takes a while.
 
+### Optional: link a tracked issue
+
+If `envctl.yaml` [configures a Linear tracker](/envctl/config-reference/#tracker-version-2-experimental), link this run to an issue so it posts a captain's log as stages complete:
+
+```bash
+envctl run create --task "Add CSV export to the orders report" --name "orders csv export" \
+  --task-ref ENG-123
+```
+
+`--task-ref` accepts a bare identifier like `ENG-123` or a full `https://linear.app/.../issue/ENG-123/...` URL. In the dashboard, press `n`, type the objective, press `enter`, and an optional second prompt asks for the issue link (press `enter` again to skip it). As each stage's checkpoint is accepted, the coordinator posts one comment to that issue: the stage, the attempt number, the worker's summary, the supervisor's review, checks, commits, and the run's token usage so far, plus a short recap of earlier stages. It posts again when a stage needs your approval, when you approve it, when a rewind starts a new revision, when a pull request opens, and if anything needs attention. A run without `--task-ref` posts nothing, tracker configured or not.
+
 ## 3. Watch it
 
 ```bash

@@ -55,6 +55,9 @@ type Model struct {
 	// cycles NewWorkflow through them.
 	Workflows   []string
 	NewWorkflow string
+	// NewTask holds the first step's objective while the second step
+	// ("new-ref") collects an optional tracker issue link.
+	NewTask     string
 	CompareRun  string
 	CompareFrom string
 	DiffRequest string
@@ -275,13 +278,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case "enter":
 				mode, body := m.Mode, strings.TrimSpace(m.Input)
-				if mode != "new" && (m.current() == nil || m.current().ID != m.InputRun || m.current().CurrentRevision != m.InputRevision || m.nodeID() != m.InputNode) {
+				if mode != "new" && mode != "new-ref" && (m.current() == nil || m.current().ID != m.InputRun || m.current().CurrentRevision != m.InputRevision || m.nodeID() != m.InputNode) {
 					m.Mode = ""
 					m.Input = ""
 					m.Error = "The selected run, revision or stage changed; reopen the input before sending."
 					return m, nil
 				}
-				if body == "" {
+				if body == "" && mode != "new-ref" {
 					return m, nil
 				}
 				m.Mode = ""
@@ -304,7 +307,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, m.act(daemon.ActionRequest{Action: "plugin-remove", PluginID: body})
 				}
 				if mode == "new" {
-					api, root, selected := m.API, m.Root, m.NewWorkflow
+					m.NewTask = body
+					m.beginInput("new-ref")
+					return m, nil
+				}
+				if mode == "new-ref" {
+					api, root, selected, task, ref := m.API, m.Root, m.NewWorkflow, m.NewTask, body
 					return m, func() tea.Msg {
 						c, err := workflow.Load(root)
 						if errors.Is(err, os.ErrNotExist) {
@@ -318,7 +326,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						}
 						ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 						defer cancel()
-						r, err := api.Create(ctx, daemon.CreateRequest{OperationID: workflow.ID("op"), Name: body, Task: body, Owner: "local", Config: c})
+						r, err := api.Create(ctx, daemon.CreateRequest{OperationID: workflow.ID("op"), Name: task, Task: task, TaskRef: ref, Owner: "local", Config: c})
 						return actionMsg{run: r, err: err}
 					}
 				}
@@ -688,6 +696,14 @@ func (m Model) header(width int) []chrome {
 			text := t.fg(t.success()).Render("Preview: ") + clean(rev.Runtime.PreviewURL)
 			rows = append(rows, chrome{text: ansi.Truncate(text, width, "…"), optional: true})
 		}
+		if pending, failed := r.TrackerLogCounts(); pending+failed > 0 {
+			style := t.dim()
+			if failed > 0 {
+				style = t.fg(t.warn())
+			}
+			text := fmt.Sprintf("Captain's log: %d pending, %d failed", pending, failed)
+			rows = append(rows, chrome{text: ansi.Truncate(style.Render(text), width, "…"), optional: true})
+		}
 	}
 	return append(rows, chrome{text: "", optional: true}, chrome{text: m.tabs(width)})
 }
@@ -705,6 +721,9 @@ func (m Model) footer(width int, compact bool) []string {
 		label := m.Mode
 		if m.Mode == "new" && len(m.Workflows) > 1 {
 			label = "new · " + clean(m.NewWorkflow) + " workflow (tab to change)"
+		}
+		if m.Mode == "new-ref" {
+			label = "issue link (optional, Enter to skip)"
 		}
 		if compact || width < 24 {
 			lines = append(lines, ansi.Truncate(t.bold().Render(label+" ")+input, width, ""))

@@ -54,6 +54,7 @@ type createInput struct {
 	OperationID string `json:"operation_id" jsonschema:"Stable caller-generated ID; reuse exactly the same request after a lost response"`
 	Name        string `json:"name"`
 	Task        string `json:"task"`
+	TaskRef     string `json:"task_ref,omitempty" jsonschema:"Linear issue URL or identifier (e.g. ENG-123) linking this run to a tracked issue"`
 	Owner       string `json:"owner"`
 	ConfigYAML  string `json:"config_yaml" jsonschema:"Complete version 2 workflow YAML"`
 	Directory   string `json:"directory" jsonschema:"Absolute project directory for resolving configuration paths"`
@@ -165,7 +166,7 @@ func New(api API, options Options) *mcp.Server {
 			if err != nil {
 				return nil, nil, err
 			}
-			r, err := api.Create(ctx, daemon.CreateRequest{OperationID: in.OperationID, Name: in.Name, Task: in.Task, Owner: in.Owner, Config: config})
+			r, err := api.Create(ctx, daemon.CreateRequest{OperationID: in.OperationID, Name: in.Name, Task: in.Task, TaskRef: in.TaskRef, Owner: in.Owner, Config: config})
 			return nil, map[string]any{"run": r}, err
 		})
 	}

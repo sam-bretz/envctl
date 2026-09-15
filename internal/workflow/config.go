@@ -31,10 +31,14 @@ type Config struct {
 	Ports        manifest.Ports    `yaml:"ports" json:"ports"`
 	Expose       []manifest.Expose `yaml:"expose" json:"expose"`
 	Preview      *Preview          `yaml:"preview,omitempty" json:"preview,omitempty"`
-	Plugins      []PluginRef       `yaml:"plugins" json:"plugins"`
-	Data         DataConfig        `yaml:"data,omitempty" json:"data,omitzero"`
-	Agents       AgentConfig       `yaml:"agents" json:"agents"`
-	Workflow     Definition        `yaml:"workflow" json:"workflow"`
+	// Tracker configures posting a captain's log to a linked issue tracker as
+	// stages complete. Nil disables it entirely, and a config without a
+	// tracker: key round-trips identically to one from before this field.
+	Tracker  *TrackerConfig `yaml:"tracker,omitempty" json:"tracker,omitempty"`
+	Plugins  []PluginRef    `yaml:"plugins" json:"plugins"`
+	Data     DataConfig     `yaml:"data,omitempty" json:"data,omitzero"`
+	Agents   AgentConfig    `yaml:"agents" json:"agents"`
+	Workflow Definition     `yaml:"workflow" json:"workflow"`
 	// Workflows are additional named workflows a run can select when it is
 	// created. A run stores only the workflow it selected, in Workflow.
 	Workflows map[string]Definition `yaml:"workflows,omitempty" json:"workflows,omitempty"`
@@ -105,6 +109,15 @@ type Harness struct {
 	Model      string   `yaml:"model,omitempty" json:"model,omitempty"`
 	Credential string   `yaml:"credential,omitempty" json:"credential,omitempty"`
 	Command    []string `yaml:"command,omitempty" json:"command,omitempty"`
+}
+
+// TrackerConfig names an issue tracker that receives a captain's-log comment
+// as each workflow stage completes. Credential is resolved lazily, at
+// prober/delivery time, the same env:/file: two-phase contract as harness and
+// plugin credentials use; Validate never touches the filesystem or environment.
+type TrackerConfig struct {
+	Provider   string `yaml:"provider" json:"provider"`
+	Credential string `yaml:"credential" json:"credential"`
 }
 type PluginRef struct {
 	ID          string            `yaml:"id" json:"id"`
@@ -435,6 +448,18 @@ func (c Config) Validate() error {
 			if !strings.HasPrefix(ref, "env:") && !strings.HasPrefix(ref, "file:") {
 				errs = append(errs, fmt.Errorf("plugin %s credential %s must be an env: or file: reference", p.ID, name))
 			}
+		}
+	}
+	if c.Tracker != nil {
+		if c.Tracker.Provider != "linear" {
+			errs = append(errs, fmt.Errorf("tracker provider %q is not supported", c.Tracker.Provider))
+		}
+		kind, path, ok := strings.Cut(c.Tracker.Credential, ":")
+		switch {
+		case !ok || path == "" || (kind != "env" && kind != "file"):
+			errs = append(errs, errors.New("tracker credential must be an env: or file: reference"))
+		case kind == "file" && !filepath.IsAbs(path):
+			errs = append(errs, errors.New("tracker credential file: reference must be an absolute path"))
 		}
 	}
 	if err := c.Workflow.Validate(); err != nil {

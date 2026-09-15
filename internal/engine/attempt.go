@@ -193,23 +193,29 @@ func (e *Engine) reconcileAttempt(ctx context.Context, run *workflow.Run, rev *w
 					return publishErr
 				}
 				current.Result.PRs = prs
-				_, acceptErr := v.Accept(current.ID, e.now())
-				return acceptErr
+				if _, err := v.Accept(current.ID, e.now()); err != nil {
+					return err
+				}
+				r.AppendTrackerLog(v.Config.Tracker, workflow.TrackerKindStageCompleted, v.ID, current.Node, current.ID, "", e.now())
+				return nil
 			})
 			if err != nil && !errors.Is(err, workflow.ErrConflict) {
 				return true, e.recoverAssignment(ctx, assignment, "publication", err)
 			}
 			return true, err
 		}
-		_, err = e.update(ctx, id, revision, "checkpoint.accepted", func(_ *workflow.Run, v *workflow.Revision) error {
+		_, err = e.update(ctx, id, revision, "checkpoint.accepted", func(run *workflow.Run, v *workflow.Revision) error {
 			if v.State == "draining" {
 				return v.ArchiveDrained(a.ID, e.now())
 			}
 			if v.State != "active" {
 				return workflow.ErrConflict
 			}
-			_, err := v.Accept(a.ID, e.now())
-			return err
+			if _, err := v.Accept(a.ID, e.now()); err != nil {
+				return err
+			}
+			run.AppendTrackerLog(v.Config.Tracker, workflow.TrackerKindStageCompleted, v.ID, a.Node, a.ID, "", e.now())
+			return nil
 		})
 		return true, err
 	}

@@ -204,6 +204,29 @@ The coordinator binds one port on `127.0.0.1` (never another interface) and forw
 
 Workers, supervisors and checks receive the running services' guest-loopback endpoints as `ENVCTL_SERVICE_<NAME>_HOST`, `ENVCTL_SERVICE_<NAME>_URL` (lowest published port) and `ENVCTL_SERVICE_<NAME>_PORT_<CONTAINER_PORT>`. These addresses work inside the VM only. A worker's values are fixed when its attempt starts; checks read them when they are submitted. Services with fixed published ports keep stable values across restarts.
 
+## Tracker (version 2, experimental)
+
+`tracker` links a run to an external issue and posts a captain's log comment to it as each workflow stage completes: what each stage decided or built, what was checked, and what is waiting on a person.
+
+```yaml
+tracker:
+  provider: linear
+  credential: file:/absolute/path/to/linear.token   # or env:LINEAR_API_KEY
+```
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `tracker.provider` | string | none | Only `linear` is supported today. An unknown value is rejected. |
+| `tracker.credential` | string | required with `tracker` | `env:NAME` or `file:/absolute/path`. Unlike plugin credentials, a `file:` reference must be an absolute path: a tracker credential is a long-lived secret independent of any one repository checkout. Resolved lazily; never printed, and never placed in agent prompts. |
+
+A config without a `tracker:` key behaves exactly as before this feature existed: it produces the same configuration digest and JSON encoding.
+
+Link a specific run to an issue with `--task-ref` (a Linear issue URL or an identifier like `ENG-123`), the dashboard's `n` input (a second, optional prompt after the objective), or the `task_ref` argument of the MCP `envctl_create` tool. A run without a link posts nothing, even with a tracker configured.
+
+When a tracker is configured, Plan's readiness probes verify the credential, that the linked issue exists, and that the credential can comment on it, without posting anything.
+
+Once linked, envctl posts one comment per event: each accepted stage checkpoint (with the stage, attempt number, worker summary, supervisor review summary, checks, commits, token usage so far, and a short recap of earlier stages), a stage awaiting human approval, an approval, a rewind (new revision, target stage, and whether the objective changed), and anything needing attention such as the token ceiling or a publication failure. Each event is posted once, even across coordinator restarts and retries; a tracker outage never blocks or fails the workflow, and pending or failed posts show in `envctl run show` and the dashboard as `captain's log: N pending, N failed`. Comment bodies go through the same redaction as agent activity and are capped in size.
+
 ## Dashboard themes
 
 The dashboard (`envctl ui`) reads your personal settings from `~/.config/envctl/config.yaml`, or `$XDG_CONFIG_HOME/envctl/config.yaml` when that is set. This file belongs to you, not to a repository.

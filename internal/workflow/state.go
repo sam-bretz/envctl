@@ -47,7 +47,70 @@ type Run struct {
 	Revisions       []Revision `json:"revisions"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+	// TrackerLog is an append-only outbox of captain's-log events, populated
+	// synchronously by AppendTrackerLog inside the same transitions that
+	// produce each event, and delivered later and independently by
+	// tracker.Deliverer. Empty (and omitted) for runs without a tracker or
+	// task ref, so their JSON encoding and digest are unaffected.
+	TrackerLog []TrackerLogEntry `json:"tracker_log,omitempty"`
 }
+
+// TrackerLogEntry is one captain's-log post. Kind selects how tracker.Render
+// reconstructs the comment body from the run's own retained history at
+// delivery time; the entry itself carries no rendered text, so a later
+// redaction or formatting fix applies to still-pending entries too.
+type TrackerLogEntry struct {
+	ID        string    `json:"id"`
+	Kind      string    `json:"kind"`
+	Revision  string    `json:"revision"`
+	Node      string    `json:"node,omitempty"`
+	Attempt   string    `json:"attempt,omitempty"`
+	Detail    string    `json:"detail,omitempty"`
+	Occurred  time.Time `json:"occurred"`
+	Status    string    `json:"status"` // pending, posted, failed
+	CommentID string    `json:"comment_id,omitempty"`
+	Attempts  int       `json:"attempts,omitempty"`
+	RetryAt   time.Time `json:"retry_at,omitempty"`
+	Error     string    `json:"error,omitempty"`
+}
+
+const (
+	TrackerKindStageCompleted   = "stage_completed"
+	TrackerKindAwaitingApproval = "awaiting_approval"
+	TrackerKindApproved         = "approved"
+	TrackerKindRewound          = "rewound"
+	TrackerKindNeedsAttention   = "needs_attention"
+)
+
+// AppendTrackerLog is the single enqueue point for every captain's-log event.
+// It is a pure, synchronous append with no I/O, safe to call inside the same
+// closure that performs the transition it logs. It is a no-op for runs
+// without a configured tracker or a linked issue, so untracked runs never
+// grow this field and stay digest-identical to before this field existed.
+func (r *Run) AppendTrackerLog(cfg *TrackerConfig, kind, revision, node, attempt, detail string, now time.Time) {
+	if cfg == nil || strings.TrimSpace(r.TaskRef) == "" {
+		return
+	}
+	r.TrackerLog = append(r.TrackerLog, TrackerLogEntry{
+		ID: ID("tlog"), Kind: kind, Revision: revision, Node: node,
+		Attempt: attempt, Detail: detail, Occurred: now, Status: "pending",
+	})
+}
+
+// TrackerLogCounts summarizes pending/failed captain's-log posts for run show
+// and the dashboard, so a tracker outage is visible without opening Linear.
+func (r *Run) TrackerLogCounts() (pending, failed int) {
+	for _, e := range r.TrackerLog {
+		switch e.Status {
+		case "pending":
+			pending++
+		case "failed":
+			failed++
+		}
+	}
+	return
+}
+
 type Revision struct {
 	ID                     string                   `json:"id"`
 	Parent                 string                   `json:"parent,omitempty"`
@@ -264,6 +327,9 @@ func (r *Revision) Requirements() []string {
 	}
 	if len(r.Config.Data.Datasets) > 0 {
 		seen["dataset.restore"] = true
+	}
+	if r.Config.Tracker != nil {
+		seen["tracker.comment"] = true
 	}
 	for _, p := range r.Config.Plugins {
 		for _, c := range append(append([]string(nil), p.Provides...), p.Requires...) {

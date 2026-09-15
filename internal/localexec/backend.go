@@ -25,6 +25,7 @@ import (
 	"github.com/sam-bretz/envctl/internal/repository"
 	"github.com/sam-bretz/envctl/internal/runstore"
 	vm "github.com/sam-bretz/envctl/internal/runtime"
+	"github.com/sam-bretz/envctl/internal/tracker"
 	"github.com/sam-bretz/envctl/internal/workflow"
 )
 
@@ -48,7 +49,27 @@ var _ engine.Backend = (*Backend)(nil)
 var idPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,100}$`)
 
 func New(store *runstore.Store) *Backend {
-	return &Backend{Store: store, Provider: vm.NewLima(store.Dir), Capabilities: publication.New(store)}
+	return &Backend{Store: store, Provider: vm.NewLima(store.Dir), Capabilities: multiProbe{publish: publication.New(store), tracker: tracker.LinearProber{}}}
+}
+
+// multiProbe routes readiness probes by exact capability name to the broker
+// that owns it. There are exactly two dynamically-probed capabilities today
+// (publication.pr, tracker.comment), and their owners are known statically,
+// so a name-routed composite is simpler than a generic delegate-until-one-
+// answers chain.
+type multiProbe struct {
+	publish *publication.Broker
+	tracker tracker.Prober
+}
+
+func (m multiProbe) Probe(ctx context.Context, a engine.Assignment, capability string) (bool, string, error) {
+	if capability == "tracker.comment" {
+		return m.tracker.Probe(ctx, a, capability)
+	}
+	return m.publish.Probe(ctx, a, capability)
+}
+func (m multiProbe) Publish(ctx context.Context, a engine.Assignment, r workflow.Result) (map[string]string, error) {
+	return m.publish.Publish(ctx, a, r)
 }
 
 func (b *Backend) IsolateBranches() bool { return true }

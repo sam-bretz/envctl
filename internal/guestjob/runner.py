@@ -166,16 +166,23 @@ class Redactor:
         safe = len(self.pending) if final else max(0, len(self.pending) - self.overlap)
         # A match crossing the boundary must be consumed whole, otherwise its
         # suffix could be emitted unredacted on the next read.
+        # Search for secrets instead of stepping byte by byte: agents emit
+        # lines of hundreds of kilobytes, and a slow reader fills the pipe.
         out = bytearray()
         i = 0
         while i < safe:
-            found = next((s for s in self.secrets if self.pending.startswith(s, i)), None)
-            if found:
-                out.extend(b'[REDACTED]')
-                i += len(found)
-            else:
-                out.append(self.pending[i])
-                i += 1
+            match = None
+            for s in self.secrets:  # longest first, so ties keep the longest
+                at = self.pending.find(s, i)
+                if at != -1 and at < safe and (match is None or at < match[0]):
+                    match = (at, s)
+            if match is None:
+                out.extend(self.pending[i:safe])
+                i = safe
+                break
+            out.extend(self.pending[i:match[0]])
+            out.extend(b'[REDACTED]')
+            i = match[0] + len(match[1])
         self.pending = self.pending[i:]
         return bytes(out)
 

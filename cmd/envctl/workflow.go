@@ -277,7 +277,7 @@ func runCmd(g *globals) *cobra.Command {
 			}
 			switch kind {
 			case "readiness":
-				return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"revision": run.CurrentRevision, "required": run.Current().Requirements(), "discovered": run.Current().DiscoveredRequirements, "probes": run.Current().Readiness, "children": run.Current().ChildRuntimes, "limits": nodeLimits(run.Current()), "unresolved": run.Current().ReadinessProblems(time.Now(), run.Current().Requirements())})
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{"revision": run.CurrentRevision, "required": run.Current().Requirements(), "discovered": run.Current().DiscoveredRequirements, "probes": run.Current().Readiness, "children": run.Current().ChildRuntimes, "limits": nodeLimits(run.Current()), "agents": nodeAgents(run.Current()), "unresolved": run.Current().ReadinessProblems(time.Now(), run.Current().Requirements())})
 			case "checkpoints":
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(run.Current().Checkpoints)
 			}
@@ -343,6 +343,13 @@ func defaultApproval(req *daemon.ActionRequest, run *workflow.Run) error {
 	case len(waiting) == 0 && req.Attempt != "":
 		return fmt.Errorf("attempt %s is not awaiting approval", req.Attempt)
 	case len(waiting) == 0:
+		v := run.Current()
+		if a := v.ApprovedUnpublished(); a != nil {
+			if v.Recovery != nil && v.Recovery.Phase == "publication" {
+				return fmt.Errorf("%s is already approved, but publishing failed: %s; the coordinator retries, and if the failure cannot clear (for example the base branch moved), run envctl run rewind %s --to %s, then approve again", a.Node, v.Recovery.Detail, run.ID, a.Node)
+			}
+			return fmt.Errorf("%s is already approved and is publishing", a.Node)
+		}
 		return errors.New("nothing in this run is awaiting approval")
 	case len(waiting) > 1:
 		var ids []string
@@ -461,6 +468,7 @@ func printRun(cmd *cobra.Command, g *globals, r *workflow.Run) error {
 		fmt.Fprintf(out, "  captain's log: %d pending, %d failed\n", pending, failed)
 	}
 	rev := r.Current()
+	printAttention(out, r)
 	printRuntime(out, "", rev.Runtime)
 	for node, child := range rev.ChildRuntimes {
 		if child != nil && (child.Runtime.PreviewURL != "" || len(child.Runtime.Services) > 0) {
@@ -495,6 +503,25 @@ func printRun(cmd *cobra.Command, g *globals, r *workflow.Run) error {
 }
 
 // printRuntime separates the host preview from guest-only service endpoints.
+// printAttention states what the run needs from a person: an approval, or a
+// rewind after approved work failed to publish, and any other recovery.
+func printAttention(out io.Writer, r *workflow.Run) {
+	rev := r.Current()
+	for _, a := range rev.Attempts {
+		if a.State == "awaiting-approval" {
+			fmt.Fprintf(out, "  %s is awaiting your approval: envctl run approve %s\n", a.Node, r.ID)
+		}
+	}
+	if rev.Recovery == nil {
+		return
+	}
+	if a := rev.ApprovedUnpublished(); a != nil && rev.Recovery.Phase == "publication" {
+		fmt.Fprintf(out, "  %s is approved, but the pull request was not opened: %s\n  next: envctl run rewind %s --to %s, then approve again (retrying on its own until then)\n", a.Node, rev.Recovery.Detail, r.ID, a.Node)
+		return
+	}
+	fmt.Fprintf(out, "  recovery (%s): %s\n", rev.Recovery.Phase, rev.Recovery.Detail)
+}
+
 func printRuntime(out io.Writer, branch string, rt workflow.RuntimeState) {
 	scope := ""
 	if branch != "" {
@@ -534,15 +561,44 @@ func nodeLimits(rev *workflow.Revision) map[string]nodeLimit {
 	}
 	return out
 }
+
+type nodeAgent struct {
+	Worker     string `json:"worker"`
+	Supervisor string `json:"supervisor"`
+}
+
+// nodeAgents reports each node's effective worker/supervisor model. An
+// empty string means the harness default (no --model flag).
+func nodeAgents(rev *workflow.Revision) map[string]nodeAgent {
+	out := map[string]nodeAgent{}
+	for id := range rev.Config.Workflow.Nodes {
+		a := rev.Config.NodeAgents(id)
+		out[id] = nodeAgent{Worker: a.Worker.Model, Supervisor: a.Supervisor.Model}
+	}
+	return out
+}
+
+func formatModel(model string) string {
+	if model == "" {
+		return "harness default"
+	}
+	return model
+}
+
 func printLimits(cmd *cobra.Command, rev *workflow.Revision) error {
 	order, err := rev.Config.Workflow.Order()
 	if err != nil {
 		return err
 	}
 	limits := nodeLimits(rev)
+	agents := nodeAgents(rev)
 	for _, id := range order {
 		l := limits[id]
 		if _, err = fmt.Fprintf(cmd.OutOrStdout(), "  %-12s %d of %d attempts, %ds per attempt, intervene after %ds without output\n", id, l.Attempts, l.MaxAttempts, l.AttemptSeconds, l.StallSeconds); err != nil {
+			return err
+		}
+		a := agents[id]
+		if _, err = fmt.Fprintf(cmd.OutOrStdout(), "               worker model %s, supervisor model %s\n", formatModel(a.Worker), formatModel(a.Supervisor)); err != nil {
 			return err
 		}
 	}

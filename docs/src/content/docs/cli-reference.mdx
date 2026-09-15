@@ -66,6 +66,32 @@ envctl run pr <run> --open   # open them in the browser
 
 In the dashboard, `g` opens the selected run's pull requests from any stage. Changes that also published submodule pull requests list each one. `--json` prints `[{"key", "url"}]`; before publication the command exits 1 with "no pull request yet".
 
+## Web dashboard
+
+```bash
+envctl web                              # serve on 127.0.0.1:4777 and open the browser
+envctl web --addr 127.0.0.1:0 --no-open # any free port; print the link only
+```
+
+`envctl web` serves the workflow dashboard to a browser on this machine. Runs are listed by what they need from you. Each run opens with one sentence saying what it needs next and the action for it, then its stages. For the selected stage:
+
+- **Chat**: the worker's and supervisor's results, live activity, and your messages. Write to the supervisor or worker from the box below.
+- **Result**: the summary, supervisor review, checks, documents (opened in a reading pane) and commits. A result waiting for you is approved here.
+- **Changes**: the source diff against where the revision started or any earlier checkpoint.
+- **Log**: the run's decisions across every revision: rewinds, rejections, failures, approvals, messages and pull requests. Pick a revision to browse it read-only.
+
+The side panel shows token use, the VM and services, readiness checks, the stage's models and limits, and plugins. You can start runs with a workflow, approve, rewind, cancel, set priority and open pull requests. Keyboard shortcuts follow `envctl ui` (`1` to `4` switch views); press `?` for the list. Like the terminal dashboard it is only a client, so stopping it never stops a run.
+
+The dashboard can approve and publish work, so it is locked to this machine:
+
+- It listens only on a loopback address. `--addr` refuses anything else.
+- The printed link carries a token from `web-token` in the state directory (created once, mode 0600). Opening it sets a same-site cookie; other visits need the link.
+- Requests with another Host header are refused, which blocks DNS rebinding. Changes also require the page's token header, JSON, and a same-origin request.
+- The page loads nothing from the network, and its content security policy allows only its own scripts. Artifacts render as Markdown without raw HTML.
+- Every change carries the run version and revision the page showed, so it never applies to state you did not see.
+
+Themes: the page follows the system light or dark setting, and the theme menu also offers the terminal dashboard's color themes. The choice is saved in the browser.
+
 ## Dashboard themes
 
 ```bash

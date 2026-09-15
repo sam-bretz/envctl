@@ -405,7 +405,7 @@ func (b *Broker) probeRepo(ctx context.Context, a engine.Assignment, repo workfl
 		return err
 	}
 	if locked.Binding != "" && locked.BaseSHA != base {
-		return errors.New("destination base changed after planning; revise and rerun QA")
+		return fmt.Errorf("%s moved on GitHub after this run planned; rewind the run so it plans and checks against the new %s", dest.Base, dest.Base)
 	}
 	pin := a.Revision.SourcePins[repo.ID]
 	if !sha.MatchString(pin) {
@@ -558,7 +558,7 @@ func (b *Broker) publishRepo(ctx context.Context, a engine.Assignment, repo work
 		return "", nil, err
 	}
 	if base != locked.BaseSHA {
-		return "", nil, errors.New("destination base changed; approval must follow revalidated QA")
+		return "", nil, fmt.Errorf("%s moved on GitHub after this run planned, so its checks no longer match what would merge; rewind to the approved change and approve again", locked.Target.Base)
 	}
 	commit := r.Commits[repo.ID]
 	artifact, ok := r.Sources[repo.ID]

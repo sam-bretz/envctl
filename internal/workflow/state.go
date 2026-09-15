@@ -191,10 +191,14 @@ type Attempt struct {
 	UpdatedAt time.Time         `json:"updated_at"`
 	Error     string            `json:"error,omitempty"`
 	Session   string            `json:"session,omitempty"`
-	Result    *Result           `json:"result,omitempty"`
-	Approval  *Approval         `json:"approval,omitempty"`
-	RetryAt   time.Time         `json:"retry_at,omitempty"`
-	Progress  *Progress         `json:"progress,omitempty"`
+	// Models is the worker/supervisor model this attempt ran, resolved once
+	// at Begin from Config.NodeAgents, keyed "worker"/"supervisor". A role
+	// with no resolved model (harness default) is omitted from the map.
+	Models   map[string]string `json:"models,omitempty"`
+	Result   *Result           `json:"result,omitempty"`
+	Approval *Approval         `json:"approval,omitempty"`
+	RetryAt  time.Time         `json:"retry_at,omitempty"`
+	Progress *Progress         `json:"progress,omitempty"`
 	// Usage is the attempt's final agent usage, recorded when it stops running.
 	Usage    *Usage     `json:"usage,omitempty"`
 	Steering []Delivery `json:"steering,omitempty"`
@@ -457,7 +461,18 @@ func (r *Revision) Begin(node string, now time.Time) (*Attempt, error) {
 	for _, dep := range r.Config.Workflow.Nodes[node].Needs {
 		inputs[dep] = r.Checkpoints[dep].ID
 	}
-	r.Attempts = append(r.Attempts, Attempt{ID: ID("attempt"), Node: node, Number: number, State: "running", Inputs: inputs, StartedAt: now, UpdatedAt: now})
+	var models map[string]string
+	agents := r.Config.NodeAgents(node)
+	if agents.Worker.Model != "" {
+		models = map[string]string{"worker": agents.Worker.Model}
+	}
+	if agents.Supervisor.Model != "" {
+		if models == nil {
+			models = map[string]string{}
+		}
+		models["supervisor"] = agents.Supervisor.Model
+	}
+	r.Attempts = append(r.Attempts, Attempt{ID: ID("attempt"), Node: node, Number: number, State: "running", Inputs: inputs, Models: models, StartedAt: now, UpdatedAt: now})
 	return &r.Attempts[len(r.Attempts)-1], nil
 }
 func (r *Revision) Propose(attempt string, result Result, now time.Time) error {

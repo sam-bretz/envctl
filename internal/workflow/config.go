@@ -146,6 +146,7 @@ type Node struct {
 	Priority     int            `yaml:"priority,omitempty" json:"priority,omitempty"`
 	Join         *JoinPolicy    `yaml:"join,omitempty" json:"join,omitempty"`
 	Limits       NodeLimits     `yaml:"limits,omitempty" json:"limits,omitzero"`
+	Agents       NodeAgents     `yaml:"agents,omitempty" json:"agents,omitzero"`
 }
 
 // NodeLimits overrides the revision-wide attempt budget for one node. Zero
@@ -154,6 +155,20 @@ type NodeLimits struct {
 	MaxAttempts    int `yaml:"max_attempts,omitempty" json:"max_attempts,omitempty"`
 	AttemptSeconds int `yaml:"attempt_seconds,omitempty" json:"attempt_seconds,omitempty"`
 	StallSeconds   int `yaml:"stall_seconds,omitempty" json:"stall_seconds,omitempty"`
+}
+
+// NodeAgents overrides the model used by one node's worker and/or
+// supervisor. Zero fields inherit Config.Agents; omitted overrides keep
+// existing digests, matching NodeLimits.
+type NodeAgents struct {
+	Worker     NodeHarness `yaml:"worker,omitempty" json:"worker,omitzero"`
+	Supervisor NodeHarness `yaml:"supervisor,omitempty" json:"supervisor,omitzero"`
+}
+
+// NodeHarness is the subset of Harness a node may override. Only Model is
+// overridable per node; kind, version, command and credential stay run-wide.
+type NodeHarness struct {
+	Model string `yaml:"model,omitempty" json:"model,omitempty"`
 }
 
 // Upper bounds for node overrides; guest jobs refuse timeouts above one day.
@@ -194,6 +209,22 @@ func (c Config) NodeLimits(node string) Limits {
 		l.StallSeconds = n.Limits.StallSeconds
 	}
 	return l
+}
+
+// NodeAgents returns the effective agent configuration for one node's
+// assignments: a node override wins per role independently, otherwise the
+// run-wide configuration applies, otherwise the harness default (an empty
+// Model omits --model).
+func (c Config) NodeAgents(node string) AgentConfig {
+	a := c.Agents
+	n := c.Workflow.Nodes[node].Agents
+	if n.Worker.Model != "" {
+		a.Worker.Model = n.Worker.Model
+	}
+	if n.Supervisor.Model != "" {
+		a.Supervisor.Model = n.Supervisor.Model
+	}
+	return a
 }
 
 // JoinPolicy names the input used to start explicit merge work. Repository

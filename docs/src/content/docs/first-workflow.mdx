@@ -123,6 +123,14 @@ The dashboard shows the stage strip, your in-flight runs, and a focused panel:
 
 Closing the dashboard never stops the run. For scripts, `envctl run show <run> --json` has the same information.
 
+Prefer a browser? `envctl web` serves the same dashboard on this machine and opens it:
+
+```bash
+envctl web
+```
+
+Runs are grouped by what they need from you. Each run says in one sentence what it needs next, with the button for it, such as **Review and approve** or **Rewind to plan**. Pick a stage to see its Chat, Result, Changes and Log. Documents open in a reading pane. The same keys work there (`?` lists them).
+
 ## 4. Plan has to prove it can finish
 
 Plan is a gate, not a document. It cannot complete while a capability the workflow needs is unresolved: a missing agent connection, no Compose stack, an unreachable database, or no pull request destination. envctl probes each one for real.

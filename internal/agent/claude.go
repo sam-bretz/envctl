@@ -172,13 +172,22 @@ func (c Claude) Session(stream string) string {
 
 // Preserve the native event stream for progress/reconnect. Only a successful
 // terminal structured result is written to the shared harness result contract.
-const claudeProcess = `import json,os,pathlib,subprocess,sys,tempfile
+//
+// Claude shares this process's output pipe through stderr, and Node makes its
+// inherited pipes non-blocking, so writes wait for the pipe instead of failing
+// with EAGAIN when a large event fills it.
+const claudeProcess = `import json,os,pathlib,select,subprocess,sys,tempfile
+def emit(b):
+ v=memoryview(b)
+ while v:
+  try:v=v[os.write(1,v):]
+  except BlockingIOError:select.select([],[1],[])
 schema,result=sys.argv[1:3]
 args=sys.argv[3:]+['--json-schema',open(schema).read()]
 p=subprocess.Popen(args,stdin=sys.stdin,stdout=subprocess.PIPE,stderr=sys.stderr)
 final=None
 for line in p.stdout:
- sys.stdout.buffer.write(line);sys.stdout.buffer.flush()
+ emit(line)
  try:
   event=json.loads(line)
   if event.get('type')=='result':final=event

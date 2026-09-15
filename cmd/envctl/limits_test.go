@@ -39,3 +39,34 @@ func TestRunShowReportsEffectiveNodeLimits(t *testing.T) {
 		t.Fatalf("unexpected limits output:\n%s", out.String())
 	}
 }
+
+func TestRunShowReportsEffectiveNodeAgentModels(t *testing.T) {
+	c, err := workflow.Parse([]byte("version: 2\nproject: demo\nrepositories: [{id: app, url: /source}]\nagents: {worker: {model: base-worker}, supervisor: {model: base-supervisor}}\nworkflow: {template: feature, nodes: {qa: {agents: {worker: {model: qa-worker}}}}}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := workflow.NewRun("feature", "exercise agent models", "dev", c, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev := run.Current()
+	agents := nodeAgents(rev)
+	if got := agents["qa"]; got.Worker != "qa-worker" || got.Supervisor != "base-supervisor" {
+		t.Fatalf("qa agents: %+v", got)
+	}
+	if got := agents["code"]; got.Worker != "base-worker" || got.Supervisor != "base-supervisor" {
+		t.Fatalf("code did not inherit run-wide agents: %+v", got)
+	}
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	if err = printLimits(cmd, rev); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "worker model qa-worker, supervisor model base-supervisor") {
+		t.Fatalf("unexpected agent model output:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "worker model base-worker, supervisor model base-supervisor") {
+		t.Fatalf("expected code to inherit the run-wide model:\n%s", out.String())
+	}
+}

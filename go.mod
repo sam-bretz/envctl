@@ -11,6 +11,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.1
 	github.com/spf13/cobra v1.10.2
+	github.com/yuin/goldmark v1.8.6
 	golang.org/x/term v0.36.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.58.0

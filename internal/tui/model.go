@@ -79,8 +79,9 @@ type snapshotMsg struct {
 	err  error
 }
 type actionMsg struct {
-	run *workflow.Run
-	err error
+	run    *workflow.Run
+	err    error
+	notice string // replaces the generic "Saved"
 }
 type artifactMsg struct {
 	key  string
@@ -153,7 +154,7 @@ func (m Model) act(req daemon.ActionRequest) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		r, err := m.API.Action(ctx, id, req)
-		return actionMsg{r, err}
+		return actionMsg{run: r, err: err}
 	}
 }
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -192,6 +193,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Error = v.err.Error()
 		} else {
 			m.Notice = "Saved"
+			if v.notice != "" {
+				m.Notice = v.notice
+			}
 			m.Error = ""
 		}
 		return m, m.refresh()
@@ -323,7 +327,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 						defer cancel()
 						r, err := api.Create(ctx, daemon.CreateRequest{OperationID: workflow.ID("op"), Name: task, Task: task, TaskRef: ref, Owner: "local", Config: c})
-						return actionMsg{r, err}
+						return actionMsg{run: r, err: err}
 					}
 				}
 			default:
@@ -425,7 +429,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						continue
 					}
 					if a.Node == m.nodeID() {
-						return m, m.act(daemon.ActionRequest{Action: "approve", Attempt: a.ID, Actor: "local", WorkDigest: a.Result.WorkDigest()})
+						approve, node := m.act(daemon.ActionRequest{Action: "approve", Attempt: a.ID, Actor: "local", WorkDigest: a.Result.WorkDigest()}), a.Node
+						return m, func() tea.Msg {
+							msg := approve().(actionMsg)
+							msg.notice = "Approved " + node + "; publishing it now"
+							return msg
+						}
 					}
 					waiting = a.Node
 				}
@@ -442,8 +451,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.Error = ""
 					m.Notice = waiting + " is awaiting approval; review it and press a again to approve"
 				} else {
-					m.Notice = ""
-					m.Error = "nothing in this run is awaiting approval"
+					m.Notice, m.Error = "", approvalStatus(r.Current())
 				}
 			}
 		case "[":
@@ -513,24 +521,7 @@ func (m Model) listHeight() int {
 	}
 	return min(len(m.Runs), max(1, min(5, m.Height/5)))
 }
-func status(rev *workflow.Revision, node string) string {
-	if cp, ok := rev.Checkpoints[node]; ok {
-		if cp.HistoricalOnly {
-			return "historical"
-		}
-		return "done"
-	}
-	if child := rev.ChildRuntimes[node]; child != nil && child.Runtime.OccupiesVM() && child.Recovery != nil {
-		return "recovering"
-	}
-	for i := len(rev.Attempts) - 1; i >= 0; i-- {
-		a := rev.Attempts[i]
-		if a.Node == node {
-			return a.State
-		}
-	}
-	return "pending"
-}
+func status(rev *workflow.Revision, node string) string { return rev.StageStatus(node) }
 
 // chrome is one rendered line of the frame around the detail panel. Optional
 // lines are dropped first when the terminal cannot fit the whole frame.
@@ -693,7 +684,11 @@ func (m Model) header(width int) []chrome {
 			chrome{text: ansi.Truncate(summary, width, "…")},
 			chrome{text: ansi.Truncate(usage.Render(r.UsageSummary()), width, "…")},
 			chrome{text: ansi.Truncate(t.dim().Render(clean(rev.Objective)), width, "…"), optional: true})
-		if rev.Recovery != nil {
+		if a := rev.ApprovedUnpublished(); a != nil && rev.Recovery != nil && rev.Recovery.Phase == "publication" {
+			rows = append(rows,
+				chrome{text: ansi.Truncate(t.fg(t.danger()).Render(clean("Approved, but the pull request was not opened: "+rev.Recovery.Detail)), width, "…")},
+				chrome{text: ansi.Truncate(t.fg(t.warn()).Render(clean("Next: select "+a.Node+", press r and enter to rewind, then approve again. Retrying on its own until then.")), width, "…")})
+		} else if rev.Recovery != nil {
 			text := t.fg(t.warn()).Render(clean("Recovery (" + rev.Recovery.Phase + "): " + rev.Recovery.Detail))
 			rows = append(rows, chrome{text: ansi.Truncate(text, width, "…")})
 		}
@@ -828,7 +823,8 @@ func (m Model) details() string {
 	node := m.nodeID()
 	switch panels[m.Panel] {
 	case "Conversation":
-		lines := []string{}
+		agents := rev.Config.NodeAgents(node)
+		lines := []string{fmt.Sprintf("Worker model: %s · Supervisor model: %s", formatModelTUI(agents.Worker.Model), formatModelTUI(agents.Supervisor.Model))}
 		for _, a := range rev.Attempts {
 			if a.Node == node {
 				lines = append(lines, fmt.Sprintf("Worker attempt %d: %s", a.Number, a.State))
@@ -856,8 +852,8 @@ func (m Model) details() string {
 				lines = append(lines, "To "+msg.Recipient+": "+msg.Body+"\n  ["+rev.MessageStatus(msg)+"]")
 			}
 		}
-		if len(lines) == 0 {
-			return "No stage messages yet. Press i to address the " + m.Recipient + "."
+		if len(lines) == 1 {
+			return lines[0] + "\n\nNo stage messages yet. Press i to address the " + m.Recipient + "."
 		}
 		return strings.Join(lines, "\n\n")
 	case "Readiness":
@@ -934,6 +930,12 @@ func (m Model) details() string {
 		return "No test evidence at this checkpoint."
 	}
 	return ""
+}
+func formatModelTUI(model string) string {
+	if model == "" {
+		return "harness default"
+	}
+	return model
 }
 func pretty(v any) string {
 	b, err := json.MarshalIndent(v, "", "  ")

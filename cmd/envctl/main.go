@@ -68,7 +68,7 @@ func root() *cobra.Command {
 	pf.StringVar(&g.stateDir, "state-dir", "", "workflow state directory (default: user state directory)")
 
 	cmd.AddCommand(upCmd(g), downCmd(g), stopCmd(g), startCmd(g), statusCmd(g), renderCmd(g),
-		logsCmd(g), execCmd(g), listCmd(g), initCmd(g), hookCmd(g), agentCmd(g), envCmd(g), runCmd(g), daemonCmd(g), tuiCmd(g), themeCmd(g), mcpCmd(g), doctorCmd(g))
+		logsCmd(g), execCmd(g), listCmd(g), initCmd(g), hookCmd(g), agentCmd(g), envCmd(g), runCmd(g), daemonCmd(g), tuiCmd(g), webCmd(g), themeCmd(g), mcpCmd(g), doctorCmd(g))
 	return cmd
 }
 

@@ -135,7 +135,7 @@ Version 2 workflow configurations set revision-wide limits under `limits`. A wor
 | `workflow.nodes.<id>.limits.attempt_seconds` | int | inherits | 1 to 86400. Applies to that node's worker, supervisor and checks without their own `timeout_seconds`. |
 | `limits.stall_seconds` | int | `600` | How long a running worker or supervisor may produce no output before the coordinator intervenes. 60 to 86400. |
 | `workflow.nodes.<id>.limits.stall_seconds` | int | inherits | 60 to 86400. Overrides the stall window for that node's agents. |
-| `limits.run_tokens` | int | `12000000` | Counted-token ceiling for the whole run, across every revision. `-1` disables it. See below for what counts. |
+| `limits.run_tokens` | int | `20000000` | Counted-token ceiling for the whole run, across every revision. `-1` disables it. See below for what counts. |
 | `limits.cache_read_weight` | number | `0.1` | Share of each cache-read token that counts toward `run_tokens`, from 0 to 1. `1` counts cache reads in full. |
 | `limits.run_cost_usd` | number | none | Optional ceiling on the API-list-price cost the harness reports. Claude reports cost; Codex does not. |
 
@@ -169,20 +169,20 @@ worker and supervisor model next to its attempt budget.
 
 Every run counts the tokens its agents use: worker and supervisor jobs, their steering resumes, and readiness probes that call a model. The counts are what the harness itself reports: input, cache writes, cache reads and output. Claude also reports an API-list-price cost, shown as "API-equivalent"; on a subscription that is a measure of usage, not a bill.
 
-Cache reads are almost all of it. On every tool call (reading a file, running a test) the agent re-reads its whole conversation from the prompt cache, so a coding session that grows to 200K tokens and makes 130 tool calls reports about 25M cache-read tokens. They cost about a tenth of other input, so the ceiling counts them at `limits.cache_read_weight` (10% by default) and everything else in full. A complete feature run on envctl itself reports 30M to 40M tokens and counts about 5M.
+Cache reads are almost all of it. On every tool call (reading a file, running a test) the agent re-reads its whole conversation from the prompt cache, so a coding session that grows to 200K tokens and makes 130 tool calls reports about 25M cache-read tokens. They cost about a tenth of other input, so the ceiling counts them at `limits.cache_read_weight` (10% by default) and everything else in full. Complete feature runs on envctl itself reported 30M to 100M tokens and counted 4M to 13M.
 
-`envctl run show` and the dashboard show the counted total against the ceiling and the reported total, for example `tokens 5.3M counted of 12.0M (44%) · 40.2M reported · cache reads 38.8M at 10% · API-equivalent $6.50`. The dashboard colors it at 80% and 100%. Usage of jobs still running is estimated until each job reports its final count.
+`envctl run show` and the dashboard show the counted total against the ceiling and the reported total, for example `tokens 5.3M counted of 20.0M (27%) · 40.2M reported · cache reads 38.8M at 10% · API-equivalent $6.50`. The dashboard colors it at 80% and 100%. Usage of jobs still running is estimated until each job reports its final count.
 
 When a run reaches `limits.run_tokens` or `limits.run_cost_usd`:
 
 - Running workers and supervisors are stopped. Their unfinished source is kept, as with any interrupted attempt.
 - No new attempt or retry starts, and readiness probes that call a model stop.
-- The run shows `needs-attention` with the reason, for example `run counted 12.0M of its 12.0M token ceiling (limits.run_tokens; 95.1M tokens reported, cache reads at 10%)`.
+- The run shows `needs-attention` with the reason, for example `run counted 20.0M of its 20.0M token ceiling (limits.run_tokens; 160.4M tokens reported, cache reads at 10%)`.
 - Work already waiting for approval can still be approved; publishing uses no tokens.
 
 To continue, raise the ceiling with `envctl run rewind <run> --to <stage> --config <file>` using a configuration with a higher `limits.run_tokens`, or cancel the run. A rewind whose configuration changes only budget limits (`run_tokens`, `run_cost_usd`, `max_attempts`, `attempt_seconds`, `stall_seconds`) keeps Plan and every checkpoint before `<stage>`, so the run resumes where it stopped. Any other configuration change, including `parallel` and `vms`, reopens Plan.
 
-For scale: dogfooding runs of envctl on itself reported 30M to 40M tokens each, about 5M counted, and $6 to $17 API-equivalent, including supervisor corrections and retries.
+For scale: dogfooding runs of envctl on itself reported 30M to 100M tokens each, 4M to 13M counted, and $6 to $26 API-equivalent, including supervisor corrections and retries. Most of the largest run was one 47M-token code attempt.
 
 ## Workflow preview (version 2, experimental)
 

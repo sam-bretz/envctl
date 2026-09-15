@@ -3,9 +3,10 @@ package workflow
 import "fmt"
 
 // DefaultRunTokens is the counted-token ceiling for a run that does not set
-// limits.run_tokens: about two complete six-stage feature runs, which count
-// roughly 5M each once cache reads are weighted.
-const DefaultRunTokens int64 = 12_000_000
+// limits.run_tokens. Complete feature runs on envctl itself counted 4M to
+// 13M once cache reads were weighted, so this fits a large feature with room
+// for retries and still stops a runaway run.
+const DefaultRunTokens int64 = 20_000_000
 
 // DefaultCacheReadWeight counts a cache-read token as a tenth of a token.
 // Agents re-read their whole conversation from the prompt cache on every tool

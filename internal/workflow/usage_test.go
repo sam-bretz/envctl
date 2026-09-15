@@ -42,7 +42,7 @@ func TestRunUsageAddsFinishedLiveAndProbeUsageAcrossRevisions(t *testing.T) {
 	if got := r.CountedTokens(); got != 400 {
 		t.Fatalf("counted tokens %d", got)
 	}
-	for _, want := range []string{"tokens 400 counted of 12.0M", "1.3K reported", "cache reads 1.0K at 10%", "API-equivalent $0.51", "running jobs estimated"} {
+	for _, want := range []string{"tokens 400 counted of 20.0M", "1.3K reported", "cache reads 1.0K at 10%", "API-equivalent $0.51", "running jobs estimated"} {
 		if !strings.Contains(summary, want) {
 			t.Fatalf("summary %q lacks %q", summary, want)
 		}

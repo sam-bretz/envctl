@@ -7,6 +7,7 @@ import pwd
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -66,6 +67,17 @@ class RunnerTests(unittest.TestCase):
             redactor = runner.Redactor(['token-that-must-not-leak'])
             result = b''.join(redactor.feed(raw[i:i+size]) for i in range(0, len(raw), size)) + redactor.feed(b'', final=True)
             self.assertEqual(result, b'hello [REDACTED] goodbye [REDACTED]!')
+
+    def test_redaction_keeps_the_longest_overlapping_secret_and_is_fast(self):
+        redactor = runner.Redactor(['abc', 'abcdef', 'zz'])
+        self.assertEqual(redactor.feed(b'xabcdefyabczzq', final=True), b'x[REDACTED]y[REDACTED][REDACTED]q')
+        # A large agent event must drain quickly so its writer never blocks.
+        redactor = runner.Redactor(['sk-secret-%02d' % n for n in range(20)])
+        line = (b'x' * 400_000) + b'sk-secret-07' + (b'y' * 400_000)
+        started = time.monotonic()
+        out = b''.join(redactor.feed(line[i:i + 8192]) for i in range(0, len(line), 8192)) + redactor.feed(b'', final=True)
+        self.assertLess(time.monotonic() - started, 0.15)
+        self.assertEqual(out, (b'x' * 400_000) + b'[REDACTED]' + (b'y' * 400_000))
 
     def test_actual_output_redaction_and_timeout(self):
         req = self.request(args=[sys.executable, '-c', 'import time; print("private-token", flush=True); time.sleep(10)'], secrets=['private-token'], timeout_seconds=1)

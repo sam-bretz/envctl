@@ -45,3 +45,33 @@ func (r *Run) PullRequests() []PullRequest {
 	}
 	return nil
 }
+
+// StageStatus is the display state of one stage: its checkpoint, a recovering
+// branch runtime, or its latest attempt, naming approved work that is still
+// publishing or failed to publish.
+func (rev *Revision) StageStatus(node string) string {
+	if cp, ok := rev.Checkpoints[node]; ok {
+		if cp.HistoricalOnly {
+			return "historical"
+		}
+		return "done"
+	}
+	if child := rev.ChildRuntimes[node]; child != nil && child.Runtime.OccupiesVM() && child.Recovery != nil {
+		return "recovering"
+	}
+	for i := len(rev.Attempts) - 1; i >= 0; i-- {
+		a := rev.Attempts[i]
+		if a.Node != node {
+			continue
+		}
+		// Approved work is verified and published in one step; say which.
+		if a.State == "verifying" && a.Approval != nil {
+			if rev.Recovery != nil && rev.Recovery.Phase == "publication" {
+				return "approved, not published"
+			}
+			return "approved, publishing"
+		}
+		return a.State
+	}
+	return "pending"
+}

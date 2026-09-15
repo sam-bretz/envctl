@@ -444,7 +444,7 @@ func runActionCmd(g *globals, action string) *cobra.Command {
 		c.Flags().StringVar(&req.Node, "to", "", "stage to revisit")
 		_ = c.MarkFlagRequired("to")
 		c.Flags().StringVar(&req.Task, "task", "", "amended objective (invalidates Task onward)")
-		c.Flags().StringVar(&configFile, "config", "", "complete v2 configuration for this revision (reopens Plan)")
+		c.Flags().StringVar(&configFile, "config", "", "complete v2 configuration for this revision (reopens Plan unless only budget limits change)")
 	case "approve":
 		c.Flags().StringVar(&req.Attempt, "attempt", "", "attempt awaiting approval")
 		_ = c.MarkFlagRequired("attempt")

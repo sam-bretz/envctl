@@ -799,6 +799,14 @@ func (r *Run) Cancel(now time.Time) {
 // Rewind invalidates the selected node and descendants. Unaffected checkpoints
 // stay immutable and retain their original provenance. The runtime must restore
 // from the input checkpoint, never from the superseded worker's live disk.
+// withoutBudget clears the revision-wide limits that only bound spending:
+// attempts, timeouts, stall windows and the run's token and cost ceilings.
+// Parallelism and VM counts stay, because Plan checks capacity against them.
+func withoutBudget(c Config) Config {
+	c.Limits = Limits{Parallel: c.Limits.Parallel, VMs: c.Limits.VMs}
+	return c
+}
+
 func (r *Run) Rewind(node, objective string, config *Config, now time.Time) (string, error) {
 	old := r.Current()
 	if old == nil {
@@ -825,8 +833,10 @@ func (r *Run) Rewind(node, objective string, config *Config, now time.Time) (str
 		}
 	}
 	// Capability or specification changes always reopen Plan, since the old
-	// readiness evidence is tied to the previous runtime/configuration.
-	if Digest(c) != Digest(old.Config) {
+	// readiness evidence is tied to the previous runtime/configuration. Budget
+	// limits are not part of what Plan verified, so raising a token ceiling or
+	// attempt budget resumes from the rewind target instead.
+	if Digest(withoutBudget(c)) != Digest(withoutBudget(old.Config)) {
 		plan := old.Config.Workflow.PlanID()
 		invalid[plan] = true
 		for id := range old.Config.Workflow.Descendants(plan) {

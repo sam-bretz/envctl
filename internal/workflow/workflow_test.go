@@ -338,6 +338,38 @@ func TestRewindDrainsAndInvalidatesDescendants(t *testing.T) {
 		t.Fatal("queued revision resurrectable")
 	}
 }
+func TestRewindWithOnlyBudgetChangesKeepsPlan(t *testing.T) {
+	r := live(t)
+	ready(r.Current(), time.Now())
+	for _, n := range []string{"task", "plan", "design"} {
+		finish(t, r, n)
+	}
+	raised := Clone(r.Current().Config)
+	raised.Limits.RunTokens = 120_000_000
+	raised.Limits.MaxAttempts = 20
+	raised.Limits.StallSeconds = 1200
+	if _, err := r.Rewind("code", "", &raised, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	v := r.Current()
+	for _, n := range []string{"task", "plan", "design"} {
+		if _, ok := v.Checkpoints[n]; !ok {
+			t.Fatalf("a budget-only rewind reopened %s", n)
+		}
+	}
+	if v.Config.Limits.RunTokens != 120_000_000 {
+		t.Fatal("the raised ceiling was not applied")
+	}
+
+	capacity := Clone(v.Config)
+	capacity.Limits.Parallel, capacity.Limits.VMs = 2, 3
+	if _, err := r.Rewind("code", "", &capacity, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.Current().Checkpoints["plan"]; ok {
+		t.Fatal("a capacity change kept Plan, which checks capacity")
+	}
+}
 func TestPluginChangeReopensPlan(t *testing.T) {
 	r := live(t)
 	ready(r.Current(), time.Now())

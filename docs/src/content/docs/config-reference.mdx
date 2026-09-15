@@ -177,7 +177,7 @@ When a run reaches `limits.run_tokens` or `limits.run_cost_usd`:
 - The run shows `needs-attention` with the reason, for example `run used 40.1M of its 40.0M token ceiling (limits.run_tokens)`.
 - Work already waiting for approval can still be approved; publishing uses no tokens.
 
-To continue, raise the ceiling with `envctl run rewind <run> --to <stage> --config <file>` using a configuration with a higher `limits.run_tokens`, or cancel the run.
+To continue, raise the ceiling with `envctl run rewind <run> --to <stage> --config <file>` using a configuration with a higher `limits.run_tokens`, or cancel the run. A rewind whose configuration changes only budget limits (`run_tokens`, `run_cost_usd`, `max_attempts`, `attempt_seconds`, `stall_seconds`) keeps Plan and every checkpoint before `<stage>`, so the run resumes where it stopped. Any other configuration change, including `parallel` and `vms`, reopens Plan.
 
 For scale: two dogfooding runs of envctl on itself used about 10M to 13M tokens each from Task through Code, roughly $5 to $7 API-equivalent, including supervisor corrections and retries.
 

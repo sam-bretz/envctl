@@ -73,7 +73,14 @@ envctl web                              # serve on 127.0.0.1:4777 and open the b
 envctl web --addr 127.0.0.1:0 --no-open # any free port; print the link only
 ```
 
-`envctl web` serves the workflow dashboard to a browser on this machine. It shows everything the terminal dashboard does (runs, stages, conversation and live activity, checkpoints and artifacts, source diffs, tests, services, readiness, the stage graph and revision history) and takes the same actions: start runs with a workflow, message the supervisor or worker, approve, rewind, cancel, set priority, attach and remove plugins, and open pull requests. Keyboard shortcuts match `envctl ui`; press `?` for the list. Like the terminal dashboard it is only a client, so stopping it never stops a run.
+`envctl web` serves the workflow dashboard to a browser on this machine. Runs are listed by what they need from you. Each run opens with one sentence saying what it needs next and the action for it, then its stages. For the selected stage:
+
+- **Chat**: the worker's and supervisor's results, live activity, and your messages. Write to the supervisor or worker from the box below.
+- **Result**: the summary, supervisor review, checks, documents (opened in a reading pane) and commits. A result waiting for you is approved here.
+- **Changes**: the source diff against where the revision started or any earlier checkpoint.
+- **Log**: the run's decisions across every revision: rewinds, rejections, failures, approvals, messages and pull requests. Pick a revision to browse it read-only.
+
+The side panel shows token use, the VM and services, readiness checks, the stage's models and limits, and plugins. You can start runs with a workflow, approve, rewind, cancel, set priority and open pull requests. Keyboard shortcuts follow `envctl ui` (`1` to `4` switch views); press `?` for the list. Like the terminal dashboard it is only a client, so stopping it never stops a run.
 
 The dashboard can approve and publish work, so it is locked to this machine:
 

@@ -446,10 +446,9 @@ func runActionCmd(g *globals, action string) *cobra.Command {
 		c.Flags().StringVar(&req.Task, "task", "", "amended objective (invalidates Task onward)")
 		c.Flags().StringVar(&configFile, "config", "", "complete v2 configuration for this revision (reopens Plan unless only budget limits change)")
 	case "approve":
-		c.Flags().StringVar(&req.Attempt, "attempt", "", "attempt awaiting approval")
-		_ = c.MarkFlagRequired("attempt")
-		c.Flags().StringVar(&req.WorkDigest, "digest", "", "exact reviewed work digest")
-		_ = c.MarkFlagRequired("digest")
+		// Both default to the single attempt awaiting approval (defaultApproval).
+		c.Flags().StringVar(&req.Attempt, "attempt", "", "attempt awaiting approval (default: the only one waiting)")
+		c.Flags().StringVar(&req.WorkDigest, "digest", "", "exact reviewed work digest (default: the waiting attempt's current result)")
 		c.Flags().StringVar(&req.Actor, "actor", os.Getenv("USER"), "reviewer identity")
 	case "priority":
 		c.Flags().IntVar(&req.Priority, "value", 0, "priority (higher runs first)")

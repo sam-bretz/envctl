@@ -165,6 +165,24 @@ run-wide model, since a connection probe has no stage in scope.
 `envctl run show` and `envctl run readiness` print each node's effective
 worker and supervisor model next to its attempt budget.
 
+### Spending fewer tokens
+
+Most of a run's tokens are cache reads: every tool call re-reads the agent's conversation so far, so long sessions in stages that read a lot of code cost the most. On envctl's own runs, one code attempt reported 26M of a run's 40M tokens. Ways to spend less:
+
+- **Use a cheaper model where the work is verified anyway.** Code and QA workers are checked by their stage's checks and by an independent supervisor, so a faster model such as Sonnet is a good fit there. Keep the default model for Plan and Design, whose decisions the later stages build on, and for every supervisor:
+
+  ```yaml
+  workflow:
+    template: feature
+    nodes:
+      code: {agents: {worker: {model: sonnet}}}
+      qa: {agents: {worker: {model: sonnet}}}
+  ```
+
+- **Use the `small` workflow for small changes.** Plan, Build and the approved change skip Task, Design and a separate QA stage. See [Workflows](#workflows-version-2-experimental).
+- **Keep stages focused.** Prompts that name the files and commands to use save the exploring an agent otherwise does.
+- **Watch the ceiling.** `limits.run_tokens` stops a run that runs away. Raising it with a rewind that only changes limits resumes where the run stopped.
+
 ### Token usage and ceilings
 
 Every run counts the tokens its agents use: worker and supervisor jobs, their steering resumes, and readiness probes that call a model. The counts are what the harness itself reports: input, cache writes, cache reads and output. Claude also reports an API-list-price cost, shown as "API-equivalent"; on a subscription that is a measure of usage, not a bill.

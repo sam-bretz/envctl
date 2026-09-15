@@ -17,10 +17,14 @@ workflow:
   nodes:
     design:
       prompt: &go "This VM has Docker but no Go toolchain. Run Go through the Compose toolbox service, or directly with: docker run --rm -v \"$PWD\":/src -w /src -e GOFLAGS=-buildvcs=false -v envctl-gomod:/go/pkg/mod -v envctl-gocache:/root/.cache/go-build golang:1.25 go test ./... . Follow the conventions of the surrounding code and docs/, and keep gofmt, go vet and go test passing."
+    # Code and QA are checked by their own tests and an independent supervisor
+    # on the default model, so their workers use the faster, cheaper Sonnet.
     code:
       prompt: *go
+      agents: {worker: {model: sonnet}}
     qa:
       prompt: *go
+      agents: {worker: {model: sonnet}}
       checks: &checks
         - name: vet
           command: [sh, -c, 'docker run --rm -v "$PWD":/src -w /src -e GOFLAGS=-buildvcs=false -v envctl-gomod:/go/pkg/mod -v envctl-gocache:/root/.cache/go-build golang:1.25 sh -c "test -z \"\$(gofmt -l cmd internal)\" && go vet ./..."']
@@ -36,6 +40,7 @@ workflows:
       build:
         prompt: *go
         checks: *checks
+        agents: {worker: {model: sonnet}}
 agents:
   worker:
     kind: claude

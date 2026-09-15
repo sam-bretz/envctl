@@ -39,10 +39,11 @@ func TestTokenCeilingStopsAgentsAndBlocksNewWork(t *testing.T) {
 
 	// Crossing the ceiling cancels the running agent. The fixture's cancelled
 	// job reports no usage, which must not erase what the attempt used.
-	running(workflow.Usage{Input: 200, CacheRead: 700, Output: 300, Estimated: true})
+	// Cache reads count at a tenth: 700 + 70 + 300 crosses the 1000 ceiling.
+	running(workflow.Usage{Input: 700, CacheRead: 700, Output: 300, Estimated: true})
 	h.until(func(v *workflow.Revision) bool { return v.Attempt(attempt).State == "failed" })
 	a := h.run().Current().Attempt(attempt)
-	if a.Usage == nil || a.Usage.Tokens() != 1200 || a.Usage.Estimated {
+	if a.Usage == nil || a.Usage.Tokens() != 1700 || a.Usage.Estimated {
 		t.Fatalf("stopped attempt lost its usage: %+v", a.Usage)
 	}
 	if over, reason := h.run().Budget(); !over || !strings.Contains(reason, "limits.run_tokens") {
@@ -107,7 +108,7 @@ func TestUsageRecordedBeforeTrackingIsBackfilledAcrossRevisions(t *testing.T) {
 			ids = append(ids, a.ID)
 		}
 	}
-	b := &backfillBackend{fixtureBackend: h.backend, recorded: map[string]*workflow.Usage{ids[0]: {CacheRead: 5_000_000, Output: 40_000, CostUSD: 2.5}}, asked: map[string]int{}}
+	b := &backfillBackend{fixtureBackend: h.backend, recorded: map[string]*workflow.Usage{ids[0]: {CacheRead: 20_000_000, Output: 40_000, CostUSD: 2.5}}, asked: map[string]int{}}
 	h.engine.Backend = b
 	h.mutate(func(r *workflow.Run) error {
 		r.Current().Config.Limits.RunTokens = 1_000_000
@@ -116,7 +117,7 @@ func TestUsageRecordedBeforeTrackingIsBackfilledAcrossRevisions(t *testing.T) {
 	h.step()
 	h.step()
 	u := h.run().Usage()
-	if u.CacheRead != 5_000_000 || u.CostUSD != 2.5 {
+	if u.CacheRead != 20_000_000 || u.CostUSD != 2.5 {
 		t.Fatalf("recorded usage not backfilled: %+v", u)
 	}
 	for _, id := range ids {

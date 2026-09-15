@@ -616,7 +616,7 @@ func (m Model) runRow(i int, width int) string {
 		tokens = t.fg(t.warn())
 	}
 	row := marker + name.Render(pad(clean(r.Name), 24)) + " " + badge.Render(pad(state, 12)) + " " +
-		tokens.Render(pad(workflow.FormatTokens(r.Usage().Tokens()), 7)) + " " + t.dim().Render(pad("local", 6)+" "+clean(branch))
+		tokens.Render(pad(workflow.FormatTokens(r.CountedTokens()), 7)) + " " + t.dim().Render(pad("local", 6)+" "+clean(branch))
 	row = ansi.Truncate(row, width, "…")
 	if i == m.Selected {
 		row = t.highlight(pad(row, width))

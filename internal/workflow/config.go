@@ -90,11 +90,14 @@ type Limits struct {
 	// before the coordinator intervenes. Zero means DefaultStallSeconds and is
 	// omitted, so existing configuration identities are unchanged.
 	StallSeconds int `yaml:"stall_seconds,omitempty" json:"stall_seconds,omitempty"`
-	// RunTokens caps the tokens a run's agents may use across all revisions:
-	// input, cache writes, cache reads and output, as the harnesses report
-	// them. Zero means DefaultRunTokens; -1 disables the ceiling. Omitted when
-	// zero so existing configuration identities are unchanged.
+	// RunTokens caps the tokens a run's agents may use across all revisions,
+	// counted as input, cache writes and output plus cache reads at
+	// CacheReadWeight. Zero means DefaultRunTokens; -1 disables the ceiling.
+	// Omitted when zero so existing configuration identities are unchanged.
 	RunTokens int64 `yaml:"run_tokens,omitempty" json:"run_tokens,omitempty"`
+	// CacheReadWeight is the share of each cache-read token that counts
+	// toward RunTokens, from 0 to 1. Unset means DefaultCacheReadWeight.
+	CacheReadWeight *float64 `yaml:"cache_read_weight,omitempty" json:"cache_read_weight,omitempty"`
 	// RunCostUSD optionally caps the API-list-price cost the harnesses report
 	// (Claude reports it; Codex does not). Zero means no cost ceiling.
 	RunCostUSD float64 `yaml:"run_cost_usd,omitempty" json:"run_cost_usd,omitempty"`
@@ -418,6 +421,9 @@ func (c Config) Validate() error {
 	}
 	if c.Limits.RunTokens < -1 || c.Limits.RunCostUSD < 0 {
 		errs = append(errs, errors.New("limits.run_tokens must be positive or -1 to disable, and limits.run_cost_usd must not be negative"))
+	}
+	if w := c.Limits.CacheReadWeight; w != nil && (*w < 0 || *w > 1) {
+		errs = append(errs, errors.New("limits.cache_read_weight must be between 0 and 1"))
 	}
 	if !validStall(c.Limits.StallSeconds) {
 		errs = append(errs, fmt.Errorf("limits.stall_seconds must be between %d and %d", MinStallSeconds, MaxNodeAttemptSeconds))

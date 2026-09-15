@@ -10,52 +10,70 @@
 <script src="/assets/app.js" defer></script>
 </head>
 <body>
-<header class="bar">
-  <button class="bar-menu" id="menu" type="button" aria-controls="runs" aria-expanded="false">Runs</button>
-  <a class="wordmark" href="/">envctl</a>
-  <span class="bar-root" id="root"></span>
-  <span class="bar-link" id="link" role="status"></span>
-  <span class="bar-spacer"></span>
-  <button type="button" class="quiet" id="help-open" title="Keyboard shortcuts (?)">Shortcuts</button>
-  <label class="theme-pick"><span class="visually-hidden">Theme</span><select id="theme"></select></label>
-  <button type="button" class="primary" id="new-run" title="Start a new run (n)">New run</button>
-</header>
+<div class="app">
+  <aside class="side" id="side" aria-label="Runs">
+    <div class="side-top">
+      <a class="brand" href="/"><img src="/assets/favicon.svg" alt="" width="20" height="20">envctl</a>
+      <button type="button" class="btn btn-quiet btn-small" id="new-run" title="Start a run (n)">New run</button>
+    </div>
+    <p class="side-root" id="root"></p>
+    <nav class="runs" id="runs"></nav>
+    <div class="side-foot">
+      <span class="link" id="link" role="status"></span>
+      <label class="theme"><span class="sr-only">Theme</span><select id="theme"></select></label>
+      <button type="button" class="icon-btn" id="help-open" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts">?</button>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim" hidden></div>
 
-<div class="layout">
-  <aside class="runs" id="runs" aria-label="Runs"></aside>
-
-  <main class="run" id="run">
-    <section class="run-head" id="run-head"></section>
-    <section class="banner" id="banner" hidden></section>
-    <nav class="track" id="track" aria-label="Stages"></nav>
-    <section class="stage-head" id="stage-head"></section>
-    <div class="tabs" id="tabs" role="tablist" aria-label="Stage views"></div>
-    <section class="panel" id="panel" role="tabpanel"></section>
-    <form class="composer" id="composer" hidden>
-      <div class="recipient" role="radiogroup" aria-label="Send to">
-        <label><input type="radio" name="recipient" value="supervisor" checked><span>Supervisor</span></label>
-        <label><input type="radio" name="recipient" value="worker"><span>Worker</span></label>
+  <main class="main" id="main">
+    <div class="topbar">
+      <button type="button" class="btn btn-quiet btn-small" id="menu" aria-controls="side" aria-expanded="false">Runs</button>
+      <span class="topbar-title" id="topbar-title"></span>
+    </div>
+    <div class="page" id="page">
+      <div id="history-note"></div>
+      <header class="head" id="head"></header>
+      <nav class="pipeline" id="pipeline" aria-label="Stages"></nav>
+      <div class="work">
+        <section class="stage" id="stage">
+          <div class="stage-head" id="stage-head"></div>
+          <div class="tabs" id="tabs" role="tablist" aria-label="Stage views"></div>
+          <div class="panel" id="panel" role="tabpanel"></div>
+          <form class="composer" id="composer" hidden>
+            <label class="sr-only" for="message">Message</label>
+            <textarea id="message" rows="1" placeholder="Message the supervisor"></textarea>
+            <div class="composer-bar">
+              <label class="recipient"><span class="sr-only">Send to</span>
+                <select id="recipient"><option value="supervisor">To supervisor</option><option value="worker">To worker</option></select>
+              </label>
+              <span class="composer-hint">Enter to send, Shift+Enter for a new line</span>
+              <button type="submit" class="btn btn-primary btn-small" id="send">Send</button>
+            </div>
+          </form>
+        </section>
+        <aside class="rail" id="rail" aria-label="Run details"></aside>
       </div>
-      <label class="visually-hidden" for="message">Message</label>
-      <textarea id="message" rows="2" placeholder="Steer this stage. Enter sends, Shift+Enter adds a line."></textarea>
-      <button type="submit" class="primary" id="send">Send to supervisor</button>
-    </form>
+    </div>
   </main>
 </div>
 
-<div class="status" id="status" role="status" aria-live="polite"></div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 
-<aside class="reader" id="reader" hidden aria-label="Artifact">
-  <header class="reader-head">
-    <div>
-      <h2 id="reader-title"></h2>
-      <p class="reader-meta" id="reader-meta"></p>
-    </div>
-    <button type="button" class="quiet" id="reader-close">Close</button>
-  </header>
-  <nav class="reader-files" id="reader-files" aria-label="Other artifacts in this checkpoint"></nav>
-  <div class="reader-body" id="reader-body"></div>
-</aside>
+<div class="reader-wrap" id="reader" hidden>
+  <div class="reader-scrim" id="reader-scrim"></div>
+  <aside class="reader" aria-label="Artifact">
+    <header class="reader-head">
+      <div class="reader-titles">
+        <h2 id="reader-title"></h2>
+        <p id="reader-meta"></p>
+      </div>
+      <button type="button" class="btn btn-quiet btn-small" id="reader-close">Close</button>
+    </header>
+    <nav class="reader-files" id="reader-files" aria-label="Artifacts in this checkpoint"></nav>
+    <div class="reader-body" id="reader-body"></div>
+  </aside>
+</div>
 
 <dialog id="dialog"><form method="dialog" id="dialog-form"></form></dialog>
 </body>

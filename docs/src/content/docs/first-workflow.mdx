@@ -218,7 +218,7 @@ preview:
 
 Each executing revision gets its own VM, and parallel branches get their own as well; `limits.vms` caps them. Agent work bills to whatever credential you configured, and a plan's usage limit stops a worker mid-stage.
 
-Agents use a lot of tokens: a single feature run through Code has measured at 10M to 13M, mostly cache reads. `envctl run show` and the dashboard show each run's total, and every run has a token ceiling of 40M by default. At the ceiling, envctl stops the agents and waits for you. Set your own with `limits.run_tokens`, or cap the reported cost with `limits.run_cost_usd`. See [Token usage and ceilings](/envctl/config-reference/#token-usage-and-ceilings).
+Agents report a lot of tokens: a full feature run on envctl itself reports 30M to 100M, nearly all cache reads, which count at a tenth toward the ceiling (4M to 13M counted). `envctl run show` and the dashboard show each run's counted and reported totals, and every run has a ceiling of 20M counted tokens by default. At the ceiling, envctl stops the agents and waits for you. Set your own with `limits.run_tokens`, or cap the reported cost with `limits.run_cost_usd`. See [Token usage and ceilings](/envctl/config-reference/#token-usage-and-ceilings).
 
 ## Where next
 

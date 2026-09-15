@@ -831,8 +831,9 @@
     const u = run.usage;
     const meterClass = u.fraction >= 1 ? 'meter over' : u.fraction >= 0.8 ? 'meter warn' : 'meter';
     const usage = h('section', {}, h('h3', { text: 'Tokens' }),
-      h('div', {}, h('strong', { text: tokens(u.tokens) }), u.limit > 0 ? h('span', { class: 'faint', text: ` of ${tokens(u.limit)}` }) : h('span', { class: 'faint', text: ' (no limit)' })),
+      h('div', {}, h('strong', { text: tokens(u.counted) }), u.limit > 0 ? h('span', { class: 'faint', text: ` of ${tokens(u.limit)} limit` }) : h('span', { class: 'faint', text: ' counted, no limit' })),
       u.limit > 0 ? h('div', { class: meterClass }, h('i')) : null,
+      h('p', { class: 'faint', title: 'Agents re-read their conversation from the prompt cache on every tool call. Cache reads cost about a tenth of other tokens, so they count at a lower weight.', text: `${tokens(u.tokens)} reported, ${tokens(u.cache_read)} of them cache reads counted at ${Math.round(u.cache_read_weight * 100)}%` }),
       h('p', { class: 'faint', text: [u.cost_usd ? `$${u.cost_usd.toFixed(2)} at API prices` : null, u.estimated ? 'running jobs estimated' : null].filter(Boolean).join(', ') }));
 
     const rt = rev.runtime;

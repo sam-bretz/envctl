@@ -41,6 +41,9 @@ type UsageView struct {
 	Summary   string  `json:"summary"`
 	Fraction  float64 `json:"fraction"`
 	Tokens    int64   `json:"tokens"`
+	Counted   int64   `json:"counted"`
+	CacheRead int64   `json:"cache_read"`
+	Weight    float64 `json:"cache_read_weight"`
 	Limit     int64   `json:"limit"`
 	CostUSD   float64 `json:"cost_usd"`
 	Estimated bool    `json:"estimated,omitempty"`
@@ -150,7 +153,7 @@ func runView(r workflow.Run, now time.Time) RunView {
 		ID: r.ID, Name: r.Name, Description: r.Description, TaskRef: r.TaskRef, Owner: r.Owner, Priority: r.Priority,
 		Version: r.Version, CurrentRevision: r.CurrentRevision, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 		PullRequests: r.PullRequests(),
-		Usage:        UsageView{Summary: r.UsageSummary(), Fraction: r.UsageFraction(), Tokens: u.Tokens(), CostUSD: u.CostUSD, Estimated: u.Estimated},
+		Usage:        UsageView{Summary: r.UsageSummary(), Fraction: r.UsageFraction(), Tokens: u.Tokens(), Counted: r.CountedTokens(), CacheRead: u.CacheRead, CostUSD: u.CostUSD, Estimated: u.Estimated},
 	}
 	if v.PullRequests == nil {
 		v.PullRequests = []workflow.PullRequest{}
@@ -158,6 +161,7 @@ func runView(r workflow.Run, now time.Time) RunView {
 	if cur != nil {
 		v.State = cur.State
 		v.Usage.Limit = cur.Config.RunTokenLimit()
+		v.Usage.Weight = cur.Config.CacheReadWeight()
 	}
 	for i := range r.Revisions {
 		v.Revisions = append(v.Revisions, revisionView(&r.Revisions[i], r.Revisions[i].ID == r.CurrentRevision, now))

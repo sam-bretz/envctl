@@ -2,9 +2,17 @@ package workflow
 
 import "fmt"
 
-// DefaultRunTokens is the token ceiling for a run that does not set
-// limits.run_tokens: about two complete six-stage feature runs.
-const DefaultRunTokens int64 = 40_000_000
+// DefaultRunTokens is the counted-token ceiling for a run that does not set
+// limits.run_tokens. Complete feature runs on envctl itself counted 4M to
+// 13M once cache reads were weighted, so this fits a large feature with room
+// for retries and still stops a runaway run.
+const DefaultRunTokens int64 = 20_000_000
+
+// DefaultCacheReadWeight counts a cache-read token as a tenth of a token.
+// Agents re-read their whole conversation from the prompt cache on every tool
+// call, so cache reads dominate what they report, but they cost about a tenth
+// of normal input.
+const DefaultCacheReadWeight = 0.1
 
 // Usage is the model usage agents reported. Tokens are summed across jobs.
 // CostUSD is the harness's own API-list-price estimate and is zero when the
@@ -23,6 +31,12 @@ type Usage struct {
 // Tokens is every token the harness reported, including cache reads.
 func (u Usage) Tokens() int64 { return u.Input + u.CacheWrite + u.CacheRead + u.Output }
 
+// Counted is the usage that counts toward the token ceiling: cache reads at
+// weight, everything else in full.
+func (u Usage) Counted(cacheReadWeight float64) int64 {
+	return u.Input + u.CacheWrite + u.Output + int64(float64(u.CacheRead)*cacheReadWeight+0.5)
+}
+
 func (u Usage) IsZero() bool { return u == Usage{} }
 
 func (u Usage) Add(v Usage) Usage {
@@ -38,6 +52,19 @@ func (c Config) RunTokenLimit() int64 {
 		return DefaultRunTokens
 	}
 	return c.Limits.RunTokens
+}
+
+// CacheReadWeight is the effective share of a cache-read token that counts.
+func (c Config) CacheReadWeight() float64 {
+	if c.Limits.CacheReadWeight == nil {
+		return DefaultCacheReadWeight
+	}
+	return *c.Limits.CacheReadWeight
+}
+
+// CountedTokens is the run's usage as the token ceiling counts it.
+func (r *Run) CountedTokens() int64 {
+	return r.Usage().Counted(r.Current().Config.CacheReadWeight())
 }
 
 // Usage sums agent usage across every revision: finished attempts, live
@@ -65,8 +92,8 @@ func (r *Run) Usage() Usage {
 // revision's configuration, and why.
 func (r *Run) Budget() (exceeded bool, reason string) {
 	u, c := r.Usage(), r.Current().Config
-	if limit := c.RunTokenLimit(); limit > 0 && u.Tokens() >= limit {
-		return true, fmt.Sprintf("run used %s of its %s token ceiling (limits.run_tokens)", FormatTokens(u.Tokens()), FormatTokens(limit))
+	if limit := c.RunTokenLimit(); limit > 0 && u.Counted(c.CacheReadWeight()) >= limit {
+		return true, fmt.Sprintf("run counted %s of its %s token ceiling (limits.run_tokens; %s tokens reported, cache reads at %s)", FormatTokens(u.Counted(c.CacheReadWeight())), FormatTokens(limit), FormatTokens(u.Tokens()), weightText(c.CacheReadWeight()))
 	}
 	if c.Limits.RunCostUSD > 0 && u.CostUSD >= c.Limits.RunCostUSD {
 		return true, fmt.Sprintf("run used $%.2f of its $%.2f cost ceiling (limits.run_cost_usd)", u.CostUSD, c.Limits.RunCostUSD)
@@ -91,20 +118,24 @@ func (r *Run) UsageFraction() float64 {
 	if limit <= 0 {
 		return 0
 	}
-	return float64(r.Usage().Tokens()) / float64(limit)
+	return float64(r.CountedTokens()) / float64(limit)
 }
+
+func weightText(w float64) string { return fmt.Sprintf("%.0f%%", 100*w) }
 
 // UsageSummary is a one-line account of the run's usage against its ceiling.
 func (r *Run) UsageSummary() string {
 	u, c := r.Usage(), r.Current().Config
-	line := "tokens " + FormatTokens(u.Tokens())
+	w := c.CacheReadWeight()
+	var line string
 	if limit := c.RunTokenLimit(); limit > 0 {
-		line += fmt.Sprintf(" of %s (%.0f%%)", FormatTokens(limit), 100*r.UsageFraction())
+		line = fmt.Sprintf("tokens %s counted of %s (%.0f%%)", FormatTokens(u.Counted(w)), FormatTokens(limit), 100*r.UsageFraction())
 	} else {
-		line += " (no ceiling)"
+		line = fmt.Sprintf("tokens %s counted (no ceiling)", FormatTokens(u.Counted(w)))
 	}
+	line += " · " + FormatTokens(u.Tokens()) + " reported"
 	if u.CacheRead > 0 {
-		line += " · cache reads " + FormatTokens(u.CacheRead)
+		line += fmt.Sprintf(" · cache reads %s at %s", FormatTokens(u.CacheRead), weightText(w))
 	}
 	if u.CostUSD > 0 {
 		line += fmt.Sprintf(" · API-equivalent $%.2f", u.CostUSD)

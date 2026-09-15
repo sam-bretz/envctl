@@ -85,6 +85,10 @@ docker ps --filter label=dev.envctl.project=mg-feat-thing --format '{{.Names}}'
 docker ps --filter label=dev.envctl.feature --format '{{.Label "dev.envctl.project"}}' | sort -u
 ```
 
+## Linking a tracked issue
+
+`--task-ref` (CLI `envctl run create`) and `task_ref` (the `envctl_create` create argument) link a workflow run to a Linear issue, when `envctl.yaml` [configures a tracker](/envctl/config-reference/#tracker-version-2-experimental). Agents never see or set the tracker credential, and never post comments themselves: envctl posts them automatically as stages complete, are approved, or need attention. A run created without a task ref posts nothing.
+
 ## Coming later
 
 An MCP server exposing status, logs, exec, seed, snapshot, and promote is on the [Roadmap](/envctl/roadmap/). Until then, agents call the CLI.

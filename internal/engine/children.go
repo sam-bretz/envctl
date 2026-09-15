@@ -44,7 +44,7 @@ func (e *Engine) recoverAssignment(ctx context.Context, a Assignment, phase stri
 	if err != nil {
 		return err
 	}
-	_, err = e.update(ctx, a.Run.ID, a.Revision.ID, "child.recovery", func(_ *workflow.Run, v *workflow.Revision) error {
+	_, err = e.update(ctx, a.Run.ID, a.Revision.ID, "child.recovery", func(run *workflow.Run, v *workflow.Revision) error {
 		child := v.ChildRuntimes[a.Child]
 		if child == nil || child.Runtime.ID != a.Revision.Runtime.ID {
 			return workflow.ErrConflict
@@ -54,6 +54,9 @@ func (e *Engine) recoverAssignment(ctx context.Context, a Assignment, phase stri
 			failures = child.Recovery.Failures + 1
 		}
 		child.Recovery = &workflow.Recovery{Phase: phase, Detail: cause.Error(), EvidenceDigest: artifact.Digest, Failures: failures, RetryAt: e.now().Add(backoff(failures))}
+		if phase == "publication" && failures == 1 {
+			run.AppendTrackerLog(v.Config.Tracker, workflow.TrackerKindNeedsAttention, v.ID, "", "", cause.Error(), e.now())
+		}
 		return nil
 	})
 	return err

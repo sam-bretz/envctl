@@ -391,28 +391,32 @@ func (e *Engine) Reconcile(ctx context.Context, id, revision string) error {
 				}
 			}
 			if exhausted != "" && !retrying {
-				if err := e.recover(ctx, id, revision, "attempt-budget", fmt.Errorf("stage %s exhausted its configured %d attempts; revise the plan or budget to continue", exhausted, count)); err != nil {
+				reason := fmt.Sprintf("stage %s exhausted its configured %d attempts; revise the plan or budget to continue", exhausted, count)
+				if err := e.recover(ctx, id, revision, "attempt-budget", errors.New(reason)); err != nil {
 					return err
 				}
-				_, err = e.update(ctx, id, revision, "run.needs-attention", func(_ *workflow.Run, v *workflow.Revision) error {
+				_, err = e.update(ctx, id, revision, "run.needs-attention", func(run *workflow.Run, v *workflow.Revision) error {
 					if v.State != "active" && v.State != "draining" {
 						return workflow.ErrConflict
 					}
 					v.State = "needs-attention"
+					run.AppendTrackerLog(v.Config.Tracker, workflow.TrackerKindNeedsAttention, v.ID, "", "", reason, e.now())
 					return nil
 				})
 				return err
 			}
 		}
 		if overBudget && len(ready) > 0 {
-			if err := e.recover(ctx, id, revision, "token-budget", errors.New(budgetReason+"; raise it with envctl run rewind --config, or cancel the run")); err != nil {
+			reason := budgetReason + "; raise it with envctl run rewind --config, or cancel the run"
+			if err := e.recover(ctx, id, revision, "token-budget", errors.New(reason)); err != nil {
 				return err
 			}
-			_, err = e.update(ctx, id, revision, "run.needs-attention", func(_ *workflow.Run, v *workflow.Revision) error {
+			_, err = e.update(ctx, id, revision, "run.needs-attention", func(run *workflow.Run, v *workflow.Revision) error {
 				if v.State != "active" && v.State != "draining" {
 					return workflow.ErrConflict
 				}
 				v.State = "needs-attention"
+				run.AppendTrackerLog(v.Config.Tracker, workflow.TrackerKindNeedsAttention, v.ID, "", "", reason, e.now())
 				return nil
 			})
 			return err
@@ -501,7 +505,7 @@ func (e *Engine) propose(ctx context.Context, id, revision, attempt string, resu
 	if err := e.verify(ctx, result); err != nil {
 		return e.fail(ctx, id, revision, attempt, err.Error())
 	}
-	_, err := e.update(ctx, id, revision, "attempt.result", func(_ *workflow.Run, v *workflow.Revision) error {
+	_, err := e.update(ctx, id, revision, "attempt.result", func(run *workflow.Run, v *workflow.Revision) error {
 		a := v.Attempt(attempt)
 		if a == nil || a.State != "running" || (v.State != "active" && v.State != "draining") {
 			return workflow.ErrConflict
@@ -522,7 +526,13 @@ func (e *Engine) propose(ctx context.Context, id, revision, attempt string, resu
 			a.Result = &result
 			return nil
 		}
-		return v.Propose(attempt, result, e.now())
+		if err := v.Propose(attempt, result, e.now()); err != nil {
+			return err
+		}
+		if a.State == "awaiting-approval" {
+			run.AppendTrackerLog(v.Config.Tracker, workflow.TrackerKindAwaitingApproval, v.ID, a.Node, a.ID, "", e.now())
+		}
+		return nil
 	})
 	if err != nil && !errors.Is(err, workflow.ErrConflict) {
 		return e.fail(ctx, id, revision, attempt, err.Error())
@@ -555,12 +565,19 @@ func (e *Engine) recover(ctx context.Context, id, revision, phase string, cause 
 	if err != nil {
 		return err
 	}
-	_, err = e.update(ctx, id, revision, "recovery.required", func(_ *workflow.Run, v *workflow.Revision) error {
+	_, err = e.update(ctx, id, revision, "recovery.required", func(run *workflow.Run, v *workflow.Revision) error {
 		failures := 1
 		if v.Recovery != nil && v.Recovery.Phase == phase {
 			failures = v.Recovery.Failures + 1
 		}
 		v.Recovery = &workflow.Recovery{Phase: phase, Detail: cause.Error(), EvidenceDigest: artifact.Digest, Failures: failures, RetryAt: e.now().Add(backoff(failures))}
+		// Only the first occurrence of a publication failure streak logs, so a
+		// flaky publish backing off does not spam the tracker on every retry.
+		// Other phases are routine transient retries, not "waiting on a
+		// person" moments the captain's log is for.
+		if phase == "publication" && failures == 1 {
+			run.AppendTrackerLog(v.Config.Tracker, workflow.TrackerKindNeedsAttention, v.ID, "", "", cause.Error(), e.now())
+		}
 		return nil
 	})
 	return err

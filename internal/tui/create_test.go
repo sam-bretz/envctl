@@ -71,6 +71,11 @@ func TestNewRunErrorStaysVisibleAfterRefresh(t *testing.T) {
 	m = typeText(m, "Add CSV export")
 	m, cmd := key(m, "enter")
 	m = drive(t, m, cmd)
+	if m.Mode != "new-ref" {
+		t.Fatal("enter did not advance to the optional issue-link step")
+	}
+	m, cmd = key(m, "enter")
+	m = drive(t, m, cmd)
 
 	if len(api.created) != 0 {
 		t.Fatal("a run was requested without a workflow configuration")
@@ -103,13 +108,18 @@ func TestNewRunCreatesFromTheRepositoryConfiguration(t *testing.T) {
 	m = typeText(m, "Add CSV export")
 	m, cmd := key(m, "enter")
 	m = drive(t, m, cmd)
-	if len(api.created) != 1 || api.created[0].Task != "Add CSV export" || m.Error != "" {
+	m = typeText(m, "ENG-123")
+	m, cmd = key(m, "enter")
+	m = drive(t, m, cmd)
+	if len(api.created) != 1 || api.created[0].Task != "Add CSV export" || api.created[0].TaskRef != "ENG-123" || m.Error != "" {
 		t.Fatalf("run not created: %d requests, error %q", len(api.created), m.Error)
 	}
 
 	api.err = errors.New("coordinator refused the run")
 	m, _ = key(m, "n")
 	m = typeText(m, "Second")
+	m, cmd = key(m, "enter")
+	m = drive(t, m, cmd)
 	m, cmd = key(m, "enter")
 	m = drive(t, m, cmd)
 	if !strings.Contains(m.Error, "coordinator refused the run") {
@@ -137,6 +147,8 @@ func TestNewRunSelectsANamedWorkflowWithTab(t *testing.T) {
 	}
 	m = typeText(m, "Add a flag")
 	m, cmd := key(m, "enter")
+	m = drive(t, m, cmd)
+	m, cmd = key(m, "enter")
 	m = drive(t, m, cmd)
 	if len(api.created) != 1 || m.Error != "" {
 		t.Fatalf("run not created: %d requests, error %q", len(api.created), m.Error)

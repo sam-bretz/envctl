@@ -20,6 +20,7 @@ import (
 	"github.com/sam-bretz/envctl/internal/localexec"
 	"github.com/sam-bretz/envctl/internal/plugin"
 	"github.com/sam-bretz/envctl/internal/runstore"
+	"github.com/sam-bretz/envctl/internal/tracker"
 	"github.com/sam-bretz/envctl/internal/tui"
 	"github.com/sam-bretz/envctl/internal/workflow"
 	"github.com/spf13/cobra"
@@ -147,6 +148,8 @@ func daemonCmd(g *globals) *cobra.Command {
 		}
 		defer store.Close()
 		coordinator := &engine.Engine{Store: store, Backend: localexec.New(store), OnError: func(err error) { fmt.Fprintln(cmd.ErrOrStderr(), "workflow reconciliation:", err) }}
+		deliverer := &tracker.Deliverer{Store: store, OnError: func(err error) { fmt.Fprintln(cmd.ErrOrStderr(), "tracker delivery:", err) }}
+		go func() { _ = deliverer.Run(cmd.Context()) }()
 		return (&daemon.Server{Store: store, Coordinator: coordinator}).Serve(cmd.Context())
 	}})
 	c.AddCommand(&cobra.Command{Use: "status", Short: "Check coordinator availability", RunE: func(cmd *cobra.Command, args []string) error {
@@ -453,6 +456,9 @@ func printRun(cmd *cobra.Command, g *globals, r *workflow.Run) error {
 	out := cmd.OutOrStdout()
 	if _, err := fmt.Fprintf(out, "%s  %s  %s\n  %s\n  workflow %s · %s\n", r.ID, r.Name, r.Current().State, r.Description, r.Current().Config.DisplayWorkflowName(), r.UsageSummary()); err != nil {
 		return err
+	}
+	if pending, failed := r.TrackerLogCounts(); pending+failed > 0 {
+		fmt.Fprintf(out, "  captain's log: %d pending, %d failed\n", pending, failed)
 	}
 	rev := r.Current()
 	printRuntime(out, "", rev.Runtime)

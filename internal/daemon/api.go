@@ -190,16 +190,35 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 			run.Cancel(now)
 			return nil
 		case "rewind":
-			_, err := run.Rewind(req.Node, req.Task, config, now)
-			return err
+			old := run.Current()
+			objectiveChanged := req.Task != "" && req.Task != old.Objective
+			newRevision, err := run.Rewind(req.Node, req.Task, config, now)
+			if err != nil {
+				return err
+			}
+			detail := "target " + req.Node
+			if objectiveChanged {
+				detail += "; objective changed"
+			}
+			run.AppendTrackerLog(run.Current().Config.Tracker, workflow.TrackerKindRewound, newRevision, req.Node, "", detail, now)
+			return nil
 		case "plugin-attach", "plugin-remove":
 			if workflow.Digest(run.Current().Config) == workflow.Digest(*config) {
 				return nil
 			}
-			_, err := run.Rewind(run.Current().Config.Workflow.PlanID(), "", config, now)
-			return err
+			plan := run.Current().Config.Workflow.PlanID()
+			newRevision, err := run.Rewind(plan, "", config, now)
+			if err != nil {
+				return err
+			}
+			run.AppendTrackerLog(run.Current().Config.Tracker, workflow.TrackerKindRewound, newRevision, plan, "", "target "+plan, now)
+			return nil
 		case "approve":
-			return run.Approve(req.Revision, req.Attempt, req.Actor, req.WorkDigest, now)
+			if err := run.Approve(req.Revision, req.Attempt, req.Actor, req.WorkDigest, now); err != nil {
+				return err
+			}
+			run.AppendTrackerLog(run.Current().Config.Tracker, workflow.TrackerKindApproved, req.Revision, "", req.Attempt, "", now)
+			return nil
 		default:
 			return fmt.Errorf("unknown action %q", req.Action)
 		}

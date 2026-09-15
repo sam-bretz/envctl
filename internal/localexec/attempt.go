@@ -716,7 +716,7 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 					return engine.Observation{}, err
 				}
 				env["PYTHONDONTWRITEBYTECODE"] = "1"
-				_, err = b.guest(a).Submit(ctx, guestjob.Request{ID: id, Args: check.Command, Dir: dir, Env: env, Secrets: secrets(a), TimeoutSeconds: timeout})
+				_, err = b.guest(a).Submit(ctx, guestjob.Request{ID: id, Args: check.Command, Dir: dir, Env: env, Secrets: agentSecrets(a), TimeoutSeconds: timeout})
 				if err != nil {
 					return engine.Observation{}, err
 				}

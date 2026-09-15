@@ -61,6 +61,7 @@ func (m *Model) beginInput(mode string) {
 		m.InputNode = m.nodeID()
 	}
 }
+
 // loadWorkflows offers the repository's workflows to the new-run input. A
 // missing or invalid configuration leaves only the default; creating the run
 // reports the configuration problem.

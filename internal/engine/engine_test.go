@@ -201,6 +201,24 @@ func TestCheckpointAdmissionAndPublication(t *testing.T) {
 	}
 }
 
+func TestClosingACompletedRunReleasesItsRuntimeWithoutChangingItsState(t *testing.T) {
+	h := setup(t)
+	h.mutate(func(r *workflow.Run) error {
+		v := r.Current()
+		v.State = "completed"
+		v.Runtime.Ready, v.Runtime.State = true, "running"
+		return r.Close(h.now)
+	})
+
+	if err := h.engine.Reconcile(context.Background(), h.id, h.rev); err != nil {
+		t.Fatal(err)
+	}
+	r := h.run()
+	if h.backend.released != 1 || r.Current().State != "completed" || r.VMCount() != 0 || r.Current().Runtime.State != "stopped" {
+		t.Fatalf("close did not release the completed runtime: releases=%d state=%s vms=%d runtime=%+v", h.backend.released, r.Current().State, r.VMCount(), r.Current().Runtime)
+	}
+}
+
 func TestPlanHoldsResultUntilExecutableReadiness(t *testing.T) {
 	h := setup(t)
 	h.backend.unready = true

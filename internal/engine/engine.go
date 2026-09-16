@@ -146,7 +146,7 @@ func (e *Engine) Tick(ctx context.Context) error {
 				e.launch(ctx, run.ID+"/"+rev.ID+"/child/"+node, func() error { return e.ReconcileChild(ctx, run.ID, rev.ID, node) })
 			}
 			e.schedulePreviews(ctx, run, rev)
-			if rev.State == "completed" || rev.State == "needs-attention" {
+			if (rev.State == "completed" && run.ClosedAt.IsZero()) || rev.State == "needs-attention" {
 				continue
 			}
 			if rev.State == "queued" {
@@ -266,7 +266,7 @@ func (e *Engine) Reconcile(ctx context.Context, id, revision string) error {
 		})
 		return err
 	}
-	if slices.Contains([]string{"cancelled", "superseded"}, rev.State) {
+	if slices.Contains([]string{"cancelled", "superseded"}, rev.State) || (rev.State == "completed" && !run.ClosedAt.IsZero()) {
 		if rev.HasChildVMs() {
 			return nil
 		}

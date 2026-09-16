@@ -19,9 +19,10 @@ const previewInterval = 10 * time.Second
 
 // schedulePreviews reconciles previews for every ready runtime of a revision,
 // including completed ones kept for inspection. A restarted coordinator
-// re-establishes forwards on its first pass.
+// re-establishes forwards on its first pass, but closed runs no longer own a
+// guest to inspect.
 func (e *Engine) schedulePreviews(ctx context.Context, run workflow.Run, rev workflow.Revision) {
-	if _, ok := e.Backend.(PreviewBackend); !ok || rev.Config.Preview == nil {
+	if _, ok := e.Backend.(PreviewBackend); !ok || rev.Config.Preview == nil || (rev.State == "completed" && !run.ClosedAt.IsZero()) {
 		return
 	}
 	targets := []string{}

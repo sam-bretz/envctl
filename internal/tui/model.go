@@ -136,6 +136,47 @@ func (m Model) nodeID() string {
 	}
 	return order[min(m.Node, len(order)-1)]
 }
+
+func runIsInFlight(r workflow.Run) bool {
+	rev := r.Current()
+	if rev == nil {
+		return false
+	}
+	switch rev.State {
+	case "queued", "preparing", "active", "draining", "recovering", "needs-attention":
+		return true
+	case "completed":
+		// A completed run stays here until its VM lifecycle is explicitly closed.
+		return r.ClosedAt.IsZero()
+	default:
+		return false
+	}
+}
+
+func (m Model) runIndices(inFlight bool) []int {
+	indices := []int{}
+	for i, r := range m.Runs {
+		if runIsInFlight(r) == inFlight {
+			indices = append(indices, i)
+		}
+	}
+	return indices
+}
+
+func (m Model) selectedRunIsInFlight() bool {
+	if r := m.current(); r != nil {
+		return runIsInFlight(*r)
+	}
+	return true
+}
+
+func vmStatus(r workflow.Run) string {
+	if r.VMCount() > 0 {
+		return "VM held"
+	}
+	return "VM released"
+}
+
 func (m Model) act(req daemon.ActionRequest) tea.Cmd {
 	r := m.current()
 	if r == nil {
@@ -421,6 +462,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "x":
 			return m, m.act(daemon.ActionRequest{Action: "cancel"})
+		case "c":
+			return m, m.act(daemon.ActionRequest{Action: "close"})
 		case "a":
 			if r := m.current(); r != nil {
 				waiting := ""
@@ -519,7 +562,7 @@ func (m Model) listHeight() int {
 	if m.Width < 70 || m.Height < 18 {
 		return 0
 	}
-	return min(len(m.Runs), max(1, min(5, m.Height/5)))
+	return min(len(m.runIndices(m.selectedRunIsInFlight())), max(1, min(5, m.Height/5)))
 }
 func status(rev *workflow.Revision, node string) string { return rev.StageStatus(node) }
 
@@ -617,6 +660,7 @@ func (m Model) runRow(i int, width int) string {
 	}
 	row := marker + name.Render(pad(clean(r.Name), 24)) + " " + badge.Render(pad(state, 12)) + " " +
 		tokens.Render(pad(workflow.FormatTokens(r.CountedTokens()), 7)) + " " + t.dim().Render(pad("local", 6)+" "+clean(branch))
+	row += " " + t.dim().Render(vmStatus(r))
 	row = ansi.Truncate(row, width, "…")
 	if i == m.Selected {
 		row = t.highlight(pad(row, width))
@@ -661,8 +705,18 @@ func (m Model) header(width int) []chrome {
 	rows = append(rows, chrome{text: "", optional: true})
 	if m.listHeight() > 0 {
 		rows = append(rows, chrome{text: t.dim().Render("IN-FLIGHT WORKFLOWS")})
-		start := max(0, m.Selected-m.listHeight()+1)
-		for i := start; i < min(len(m.Runs), start+m.listHeight()); i++ {
+		inFlight := m.selectedRunIsInFlight()
+		indices := m.runIndices(inFlight)
+		if !inFlight {
+			rows[len(rows)-1] = chrome{text: t.dim().Render("FINISHED WORKFLOWS")}
+		}
+		selected := slices.Index(indices, m.Selected)
+		if selected < 0 {
+			selected = 0
+		}
+		start := max(0, selected-m.listHeight()+1)
+		for pos := start; pos < min(len(indices), start+m.listHeight()); pos++ {
+			i := indices[pos]
 			rows = append(rows, chrome{text: m.runRow(i, width), optional: i != m.Selected, run: i + 1})
 		}
 	}
@@ -682,7 +736,7 @@ func (m Model) header(width int) []chrome {
 		rows = append(rows,
 			chrome{text: "", optional: true},
 			chrome{text: ansi.Truncate(summary, width, "…")},
-			chrome{text: ansi.Truncate(usage.Render(r.UsageSummary()), width, "…")},
+			chrome{text: ansi.Truncate(usage.Render(r.UsageSummary())+" · "+vmStatus(*r), width, "…")},
 			chrome{text: ansi.Truncate(t.dim().Render(clean(rev.Objective)), width, "…"), optional: true})
 		if a := rev.ApprovedUnpublished(); a != nil && rev.Recovery != nil && rev.Recovery.Phase == "publication" {
 			rows = append(rows,
@@ -732,9 +786,9 @@ func (m Model) footer(width int, compact bool) []string {
 		}
 	} else {
 		prompt := t.dim().Render("To ") + t.fg(t.accent()).Render(m.Recipient) +
-			t.dim().Render(" · i chat · n new · r rewind · a approve · o artifact · d diff · p/P plugins · x cancel")
+			t.dim().Render(" · i chat · n new · r rewind · a approve · c close · o artifact · d diff · p/P plugins · x cancel")
 		if compact {
-			prompt = t.dim().Render("i chat · o artifact")
+			prompt = t.dim().Render("i chat · c close · o artifact")
 		}
 		lines = append(lines, ansi.Truncate(prompt, width, ""))
 	}

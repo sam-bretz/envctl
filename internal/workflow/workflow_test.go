@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -405,6 +406,67 @@ func TestRetryAndCancelRetainFailureHistory(t *testing.T) {
 	r.Cancel(time.Now())
 	if rev.Attempts[0].State != "failed" || rev.Attempts[1].State != "cancelled" {
 		t.Fatal(rev.Attempts)
+	}
+}
+
+func TestClosingACompletedRunRetainsCompletionAndUsesAnOmittableMarker(t *testing.T) {
+	r := live(t)
+	now := time.Now().UTC()
+	r.Current().State = "completed"
+	checkpoint := Checkpoint{ID: "cp_task", Node: "task", Result: Result{Summary: "retained"}}
+	r.Current().Checkpoints["task"] = checkpoint
+	before, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(before), "closed_at") {
+		t.Fatal("an open run serialized a closed marker")
+	}
+
+	if err := r.Close(now); err != nil {
+		t.Fatal(err)
+	}
+	if r.Current().State != "completed" || !r.ClosedAt.Equal(now) || r.Current().Checkpoints["task"].ID != checkpoint.ID {
+		t.Fatalf("closing changed retained state: closed=%s state=%s checkpoints=%+v", r.ClosedAt, r.Current().State, r.Current().Checkpoints)
+	}
+	after, err := json.Marshal(r)
+	if err != nil || !strings.Contains(string(after), "closed_at") {
+		t.Fatalf("closed marker was not persisted: %v %s", err, after)
+	}
+
+	if err := r.Cancel(now); err == nil || !strings.Contains(err.Error(), "close") {
+		t.Fatalf("completed cancellation did not point to close: %v", err)
+	}
+	if r.Current().State != "completed" {
+		t.Fatal("cancel relabelled completed work")
+	}
+}
+
+func TestCancelOnlyChangesUnfinishedRevisions(t *testing.T) {
+	r := live(t)
+	r.Current().State = "completed"
+	if _, err := r.Rewind("task", "follow-up", nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Cancel(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if r.Revision(r.Revisions[0].ID).State != "superseded" || r.Current().State != "cancelled" {
+		t.Fatalf("cancel changed the wrong revisions: %+v", r.Revisions)
+	}
+}
+
+func TestRewindReopensAClosedRunForFollowUpWork(t *testing.T) {
+	r := live(t)
+	r.Current().State = "completed"
+	if err := r.Close(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Rewind("task", "follow-up", nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if !r.ClosedAt.IsZero() || r.Current().State != "queued" {
+		t.Fatalf("closed marker survived rewind: closed=%s state=%s", r.ClosedAt, r.Current().State)
 	}
 }
 

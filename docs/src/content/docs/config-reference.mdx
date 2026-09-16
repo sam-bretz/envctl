@@ -242,6 +242,17 @@ tracker:
 
 A config without a `tracker:` key behaves exactly as before this feature existed: it produces the same configuration digest and JSON encoding.
 
+The log posts one comment per event:
+
+| Event | Comment |
+| --- | --- |
+| Stage completed | The stage, attempt, worker summary, supervisor review, checks, commits, token usage, and a cumulative "so far" section. |
+| Awaiting approval | Which stage is waiting on a person. |
+| Approved | Which attempt was approved. |
+| Pull request opened | The URL, one line per repository for a run spanning several. |
+| Rewound | The new revision, its target stage, and the reason or objective change. |
+| Needs attention | The cause, such as the token ceiling or a publication failure. |
+
 Link a specific run to an issue with `--task-ref` (a Linear issue URL or an identifier like `ENG-123`), the dashboard's `n` input (a second, optional prompt after the objective), or the `task_ref` argument of the MCP `envctl_create` tool. A run without a link posts nothing, even with a tracker configured.
 
 When a tracker is configured, Plan's readiness probes verify the credential, that the linked issue exists, and that the credential can comment on it, without posting anything.

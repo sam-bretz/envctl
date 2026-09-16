@@ -109,6 +109,14 @@ type Invocation struct {
 	Model          string
 	Session        string
 	TimeoutSeconds int
+	// ReadOnly restricts the agent to reading: it can inspect the worktree
+	// but not edit it or run commands. Answering a question uses it so the
+	// answer cannot change the work being asked about.
+	ReadOnly bool
+	// Fork resumes Session into a new session instead of continuing it, so
+	// the original transcript, which the supervisor itself resumes when
+	// steered, is left exactly as it was. Only Claude can fork.
+	Fork bool
 	// Env carries coordinator-derived ENVCTL_* values, such as guest service
 	// endpoints. It cannot override harness homes or credentials.
 	Env map[string]string `json:",omitempty"`
@@ -210,12 +218,23 @@ func (c Codex) Request(i Invocation, credential Credential) (guestjob.Request, e
 	if err := validateInvocation(i); err != nil {
 		return guestjob.Request{}, err
 	}
+	// Codex has no way to branch a session, and continuing one would append
+	// to the transcript the agent resumes later. Refuse rather than pollute it.
+	if i.Fork {
+		return guestjob.Request{}, errors.New("codex cannot fork a session; start a fresh read-only invocation instead")
+	}
 	dir := invocationDir(i.ID)
 	args := []string{CodexBinary, "exec"}
 	if i.Session != "" {
 		args = append(args, "resume")
 	}
-	args = append(args, "--json", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "--output-schema", dir+"/schema.json", "--output-last-message", dir+"/result.json")
+	sandbox := []string{"--dangerously-bypass-approvals-and-sandbox"}
+	if i.ReadOnly {
+		sandbox = []string{"--sandbox", "read-only"}
+	}
+	args = append(args, "--json", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check")
+	args = append(args, sandbox...)
+	args = append(args, "--output-schema", dir+"/schema.json", "--output-last-message", dir+"/result.json")
 	if i.Model != "" {
 		args = append(args, "--model", i.Model)
 	}

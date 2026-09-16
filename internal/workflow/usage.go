@@ -76,6 +76,11 @@ func (r *Run) Usage() Usage {
 		for _, u := range v.ProbeUsage {
 			total = total.Add(u)
 		}
+		for _, q := range v.Questions {
+			if q.Usage != nil {
+				total = total.Add(*q.Usage)
+			}
+		}
 		for _, a := range v.Attempts {
 			switch {
 			case a.Usage != nil:

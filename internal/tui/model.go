@@ -106,7 +106,12 @@ type openedMsg struct {
 	err   error
 }
 
-var panels = []string{"Conversation", "Checkpoint", "Changes", "Tests", "Services", "Readiness", "Graph", "History"}
+// panels are the detail views. Services, Readiness, Graph and Checkpoint were
+// cut because they did not help follow or steer a run. What was worth keeping
+// moved: blocking readiness problems, recovery and service states to the run
+// summary; a stage's dependencies, artifacts and approval into Chat. History
+// became the Decision Log.
+var panels = []string{"Chat", "Changes", "Tests", "Decision Log"}
 
 func New(api API, root string) Model {
 	m := Model{API: api, Root: root, Width: 100, Height: 30, Recipient: "supervisor"}
@@ -318,6 +323,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Mode = ""
 				m.Input = ""
 			case "tab", "shift+tab":
+				// Flip a message between steering and asking without retyping
+				// it: the two are one keystroke apart but do different things.
+				switch m.Mode {
+				case "chat":
+					m.Mode = "ask"
+				case "ask":
+					m.Mode = "chat"
+				}
 				if m.Mode == "new" && len(m.Workflows) > 1 {
 					step := 1
 					if key == "shift+tab" {
@@ -345,6 +358,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Input = ""
 				if mode == "chat" {
 					return m, m.act(daemon.ActionRequest{Action: "message", Node: m.nodeID(), Recipient: m.Recipient, Message: body})
+				}
+				if mode == "ask" {
+					return m, m.act(daemon.ActionRequest{Action: "ask", Node: m.nodeID(), Message: body, Actor: "local"})
 				}
 				if mode == "rewind" {
 					return m, m.act(daemon.ActionRequest{Action: "rewind", Node: m.nodeID(), Task: body})
@@ -455,6 +471,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Offset = max(0, m.Offset-max(1, m.Height/3))
 		case "i":
 			m.beginInput("chat")
+		case "?":
+			m.beginInput("ask")
 		case "n":
 			m.beginInput("new")
 			m.loadWorkflows()
@@ -561,7 +579,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Notice = "Comparison base: revision source pins"
 		case "d":
 			if _, ok := m.selectedCheckpoint(); ok {
-				m.Panel = 2
+				// By name: a fixed index silently pointed at Tests once the
+				// Checkpoint tab was removed and the tabs shifted.
+				m.Panel = slices.Index(panels, "Changes")
 				m.clearArtifact()
 				m.DiffRequest = m.diffKey()
 				api, id, request := m.API, m.current().ID, m.DiffRequest
@@ -769,9 +789,16 @@ func (m Model) header(width int) []chrome {
 			text := t.fg(t.warn()).Render(clean("Recovery (" + rev.Recovery.Phase + "): " + rev.Recovery.Detail))
 			rows = append(rows, chrome{text: ansi.Truncate(text, width, "…")})
 		}
+		// What blocks a run belongs where you look first, not on a tab.
+		for _, line := range headerBlockers(rev, m.nodeID()) {
+			rows = append(rows, chrome{text: ansi.Truncate(t.fg(t.warn()).Render(clean(line)), width, "…")})
+		}
 		if rev.Runtime.PreviewURL != "" {
 			text := t.fg(t.success()).Render("Preview: ") + clean(rev.Runtime.PreviewURL)
 			rows = append(rows, chrome{text: ansi.Truncate(text, width, "…"), optional: true})
+		}
+		if line := serviceLine(rev); line != "" {
+			rows = append(rows, chrome{text: ansi.Truncate(t.dim().Render(clean(line)), width, "…"), optional: true})
 		}
 		if pending, failed := r.TrackerLogCounts(); pending+failed > 0 {
 			style := t.dim()
@@ -802,16 +829,22 @@ func (m Model) footer(width int, compact bool) []string {
 		if m.Mode == "new-ref" {
 			label = "issue link (optional, Enter to skip)"
 		}
+		if m.Mode == "chat" {
+			label = "steer " + m.Recipient + " · changes the work · tab to ask instead"
+		}
+		if m.Mode == "ask" {
+			label = "ask " + m.nodeID() + "'s supervisor · does not change the work · tab to steer instead"
+		}
 		if compact || width < 24 {
 			lines = append(lines, ansi.Truncate(t.bold().Render(label+" ")+input, width, ""))
 		} else {
 			lines = append(lines, t.box(label, []string{input}, width)...)
 		}
 	} else {
-		prompt := t.dim().Render("To ") + t.fg(t.accent()).Render(m.Recipient) +
-			t.dim().Render(" · i chat · n new · r rewind · a approve · c close · o artifact · d diff · p/P plugins · x cancel")
+		prompt := t.dim().Render("Steer ") + t.fg(t.accent()).Render(m.Recipient) +
+			t.dim().Render(" · i steer · ? ask · n new · r rewind · a approve · c close · o artifact · d diff · p/P plugins · x cancel")
 		if compact {
-			prompt = t.dim().Render("i chat · c close · o artifact")
+			prompt = t.dim().Render("i steer · ? ask · o artifact")
 		}
 		lines = append(lines, ansi.Truncate(prompt, width, ""))
 	}
@@ -899,88 +932,10 @@ func (m Model) details() string {
 	rev := m.viewRevision()
 	node := m.nodeID()
 	switch panels[m.Panel] {
-	case "Conversation":
-		agents := rev.Config.NodeAgents(node)
-		lines := []string{fmt.Sprintf("Worker model: %s · Supervisor model: %s", formatModelTUI(agents.Worker.Model), formatModelTUI(agents.Supervisor.Model))}
-		for _, a := range rev.Attempts {
-			if a.Node == node {
-				lines = append(lines, fmt.Sprintf("Worker attempt %d: %s", a.Number, a.State))
-				if a.Error != "" {
-					lines = append(lines, a.Error)
-				}
-				if a.Result != nil {
-					lines = append(lines, a.Result.Summary, "Supervisor: "+a.Result.Review.Summary)
-				}
-				if p := a.Progress; a.State == "running" && p != nil {
-					live := "Live: " + p.Phase
-					if p.Generation > 0 {
-						live += fmt.Sprintf(" (resume %d)", p.Generation)
-					}
-					if p.Detail != "" {
-						live += " — " + p.Detail
-					}
-					live += " · updated " + p.UpdatedAt.Local().Format("15:04:05")
-					lines = append(lines, live+"\n  "+strings.Join(p.Activity, "\n  "))
-				}
-			}
-		}
-		for _, msg := range rev.Messages {
-			if msg.Node == "" || msg.Node == node {
-				lines = append(lines, "To "+msg.Recipient+": "+msg.Body+"\n  ["+rev.MessageStatus(msg)+"]")
-			}
-		}
-		if len(lines) == 1 {
-			return lines[0] + "\n\nNo stage messages yet. Press i to address the " + m.Recipient + "."
-		}
-		return strings.Join(lines, "\n\n")
-	case "Readiness":
-		if child := rev.ChildRuntimes[node]; child != nil {
-			return "Branch runtime for " + node + ":\n" + pretty(child) + "\n\nParent Plan requirements: " + strings.Join(rev.Requirements(), ", ")
-		}
-		problems := rev.ReadinessProblems(time.Now(), rev.Requirements())
-		var attachments []string
-		for _, p := range rev.Config.Plugins {
-			attachments = append(attachments, fmt.Sprintf("%s@%s  %s\nCapabilities: %s", p.ID, p.Version, p.Digest, strings.Join(p.Provides, ", ")))
-		}
-		pluginText := "\n\nInvocation plugins (p add/replace, P remove; reopens Plan):\n" + strings.Join(attachments, "\n")
-		if len(rev.DiscoveredRequirements) > 0 {
-			pluginText += "\n\nDiscovered during Plan:\n"
-			for _, requirement := range rev.DiscoveredRequirements {
-				pluginText += fmt.Sprintf("%s -> %s: %s\n", requirement.Capability, strings.Join(requirement.Nodes, ", "), requirement.Reason)
-			}
-		}
-		if rev.Recovery != nil {
-			problems = append(problems, fmt.Sprintf("%s: %s\nEvidence: %s\nRetry after: %s", rev.Recovery.Phase, rev.Recovery.Detail, rev.Recovery.EvidenceDigest, rev.Recovery.RetryAt.Format(time.RFC3339)))
-		}
-		if len(problems) == 0 {
-			return "All declared capabilities have current readiness evidence." + pluginText
-		}
-		return "Plan must resolve these before downstream execution:\n\n" + strings.Join(problems, "\n") + pluginText
-	case "Services":
-		if child := rev.ChildRuntimes[node]; child != nil {
-			return "Branch runtime for " + node + ":\n" + runtimeSummary(child.Runtime)
-		}
-		return runtimeSummary(rev.Runtime)
-	case "Graph":
-		order, _ := rev.Config.Workflow.Order()
-		lines := []string{}
-		for _, id := range order {
-			n := rev.Config.Workflow.Nodes[id]
-			lines = append(lines, fmt.Sprintf("%s [%s] <- %s", id, status(rev, id), strings.Join(n.Needs, ", ")))
-		}
-		return strings.Join(lines, "\n")
-	case "Checkpoint":
-		if cp, ok := rev.Checkpoints[node]; ok {
-			return checkpointSummary(cp, m.ArtifactIndex)
-		}
-		for _, a := range rev.Attempts {
-			if a.Node == node && a.State == "awaiting-approval" {
-				return "Awaiting approval of this exact result (a to approve):\n" + pretty(a.Result)
-			}
-		}
-		return "No accepted checkpoint for " + node + "."
-	case "History":
-		return m.history()
+	case "Chat":
+		return m.chat()
+	case "Decision Log":
+		return m.decisionLog()
 	case "Changes":
 		base := "revision source pins"
 		if m.CompareRun == r.ID && m.CompareFrom != "" {

@@ -17,7 +17,7 @@ func TestRevisionReviewIsIndependentAndReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.Current().Checkpoints["task"] = workflow.Checkpoint{ID: "cp_new", Node: "task", Result: workflow.Result{Summary: "revised task"}}
-	m.Panel = 1
+	m = panel(t, m, "Chat")
 	m, cmd := key(m, "[")
 	if cmd != nil || m.viewRevision().ID != old || !strings.Contains(m.details(), "original task") {
 		t.Fatal("history did not select the old checkpoint")

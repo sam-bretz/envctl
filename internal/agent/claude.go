@@ -105,6 +105,15 @@ chmod 755 "$destination" "$destination/claude"
 `, "envctl-claude-install", ClaudeVersion, ClaudeArmSHA, ClaudeAMD64SHA, claudeDownload}})
 }
 
+// claudeTools drops every tool that can change files or run commands from a
+// read-only invocation. Bash goes too: it can write as easily as it reads.
+func claudeTools(i Invocation) string {
+	if i.ReadOnly {
+		return "Read,Glob,Grep"
+	}
+	return "Bash,Read,Edit,Write,Glob,Grep"
+}
+
 func claudeHome(role string) string { return "/work/envctl/harness-homes/claude-" + role }
 
 func (c Claude) Request(i Invocation, credential Credential) (guestjob.Request, error) {
@@ -112,12 +121,15 @@ func (c Claude) Request(i Invocation, credential Credential) (guestjob.Request, 
 		return guestjob.Request{}, err
 	}
 	dir := invocationDir(i.ID)
-	args := []string{"python3", "-c", claudeProcess, dir + "/schema.json", dir + "/result.json", ClaudeBinary, "--print", "--verbose", "--output-format", "stream-json", "--safe-mode", "--setting-sources", "", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`, "--dangerously-skip-permissions", "--tools", "Bash,Read,Edit,Write,Glob,Grep"}
+	args := []string{"python3", "-c", claudeProcess, dir + "/schema.json", dir + "/result.json", ClaudeBinary, "--print", "--verbose", "--output-format", "stream-json", "--safe-mode", "--setting-sources", "", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`, "--dangerously-skip-permissions", "--tools", claudeTools(i)}
 	if i.Model != "" {
 		args = append(args, "--model", i.Model)
 	}
 	if i.Session != "" {
 		args = append(args, "--resume", i.Session)
+		if i.Fork {
+			args = append(args, "--fork-session")
+		}
 	}
 	env := map[string]string{"CLAUDE_CONFIG_DIR": claudeHome(i.Role), "DISABLE_AUTOUPDATER": "1", "PYTHONDONTWRITEBYTECODE": "1"}
 	if credential.APIKey != "" {

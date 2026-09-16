@@ -56,6 +56,7 @@ func (e *Engine) recoverAssignment(ctx context.Context, a Assignment, phase stri
 		child.Recovery = &workflow.Recovery{Phase: phase, Detail: cause.Error(), EvidenceDigest: artifact.Digest, Failures: failures, RetryAt: e.now().Add(backoff(failures))}
 		if phase == "publication" && failures == 1 {
 			run.AppendTrackerLog(v.Config.Tracker, workflow.TrackerKindNeedsAttention, v.ID, "", "", cause.Error(), e.now())
+			v.AddNote(workflow.Note{At: e.now(), Kind: workflow.NotePublishFailed, Node: a.Child, Detail: cause.Error()})
 		}
 		return nil
 	})

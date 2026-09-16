@@ -32,6 +32,10 @@ type Observation struct {
 	Result  *workflow.Result
 	Detail  string // already redacted by the backend
 	Session string // explicit harness session identity for durable continuation
+	// Notes are decisions the backend made that the run should keep, such as
+	// nudging a stalled agent. They are reported cumulatively; the engine
+	// records each once.
+	Notes []workflow.Note
 	// Progress and Delivered are display state for running attempts. Delivered
 	// lists user messages already submitted to an agent invocation.
 	Progress  *workflow.Progress
@@ -146,6 +150,9 @@ func (e *Engine) Tick(ctx context.Context) error {
 				e.launch(ctx, run.ID+"/"+rev.ID+"/child/"+node, func() error { return e.ReconcileChild(ctx, run.ID, rev.ID, node) })
 			}
 			e.schedulePreviews(ctx, run, rev)
+			// Before the completed-revision skip below: a finished stage can
+			// still be asked about while its VM is kept.
+			e.scheduleQuestions(ctx, run, rev)
 			if (rev.State == "completed" && run.ClosedAt.IsZero()) || rev.State == "needs-attention" {
 				continue
 			}
@@ -400,6 +407,7 @@ func (e *Engine) Reconcile(ctx context.Context, id, revision string) error {
 						return workflow.ErrConflict
 					}
 					v.State = "needs-attention"
+					v.AddNote(workflow.Note{At: e.now(), Kind: workflow.NoteAttemptBudget, Node: exhausted, Detail: reason})
 					run.AppendTrackerLog(v.Config.Tracker, workflow.TrackerKindNeedsAttention, v.ID, "", "", reason, e.now())
 					return nil
 				})
@@ -416,6 +424,7 @@ func (e *Engine) Reconcile(ctx context.Context, id, revision string) error {
 					return workflow.ErrConflict
 				}
 				v.State = "needs-attention"
+				v.AddNote(workflow.Note{At: e.now(), Kind: workflow.NoteTokenCeiling, Detail: budgetReason})
 				run.AppendTrackerLog(v.Config.Tracker, workflow.TrackerKindNeedsAttention, v.ID, "", "", reason, e.now())
 				return nil
 			})
@@ -577,6 +586,7 @@ func (e *Engine) recover(ctx context.Context, id, revision, phase string, cause 
 		// person" moments the captain's log is for.
 		if phase == "publication" && failures == 1 {
 			run.AppendTrackerLog(v.Config.Tracker, workflow.TrackerKindNeedsAttention, v.ID, "", "", cause.Error(), e.now())
+			v.AddNote(workflow.Note{At: e.now(), Kind: workflow.NotePublishFailed, Detail: cause.Error()})
 		}
 		return nil
 	})

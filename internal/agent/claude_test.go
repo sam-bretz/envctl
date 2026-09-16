@@ -85,3 +85,64 @@ func TestInvocationEnvironmentIsScopedToEnvctlValues(t *testing.T) {
 		}
 	}
 }
+
+func TestAQuestionCannotChangeTheWorkItAsksAbout(t *testing.T) {
+	c := Claude{}
+	base := Invocation{ID: "question_1", Role: "supervisor", Directory: "/work/envctl/repos/app", Prompt: "is there a PR?", Schema: AnswerSchema(), TimeoutSeconds: 60}
+
+	readOnly := base
+	readOnly.ReadOnly = true
+	req, err := c.Request(readOnly, Credential{APIKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := argAfter(req.Args, "--tools")
+	for _, writer := range []string{"Bash", "Edit", "Write"} {
+		if strings.Contains(tools, writer) {
+			t.Fatalf("a read-only invocation can still use %s: %q", writer, tools)
+		}
+	}
+
+	// Forking leaves the supervisor's own transcript untouched; it is the one
+	// the supervisor resumes when steered.
+	forked := readOnly
+	forked.Session, forked.Fork = "01a08f59-7073-7a83-b959-867ca896ce48", true
+	req, err = c.Request(forked, Credential{APIKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if argAfter(req.Args, "--resume") != forked.Session || !slices.Contains(req.Args, "--fork-session") {
+		t.Fatalf("session not forked: %v", req.Args)
+	}
+
+	// An ordinary worker keeps its tools and continues its own session.
+	req, _ = c.Request(base, Credential{APIKey: "k"})
+	if !strings.Contains(argAfter(req.Args, "--tools"), "Edit") || slices.Contains(req.Args, "--fork-session") {
+		t.Fatalf("a normal invocation changed: %v", req.Args)
+	}
+}
+
+func TestCodexRefusesToForkRatherThanAppendToASession(t *testing.T) {
+	i := Invocation{ID: "question_1", Role: "supervisor", Directory: "/work/envctl/repos/app", Prompt: "p", Schema: AnswerSchema(), TimeoutSeconds: 60,
+		Session: "01a08f59-7073-7a83-b959-867ca896ce48", Fork: true}
+	if _, err := (Codex{}).Request(i, Credential{APIKey: "k"}); err == nil {
+		t.Fatal("codex continued a session it cannot fork")
+	}
+	i.Session, i.Fork, i.ReadOnly = "", false, true
+	req, err := (Codex{}).Request(i, Credential{APIKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(req.Args, "--dangerously-bypass-approvals-and-sandbox") || argAfter(req.Args, "--sandbox") != "read-only" {
+		t.Fatalf("a read-only codex invocation is not sandboxed: %v", req.Args)
+	}
+}
+
+func argAfter(args []string, flag string) string {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag {
+			return args[i+1]
+		}
+	}
+	return ""
+}

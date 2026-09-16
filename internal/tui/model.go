@@ -579,7 +579,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.Notice = "Comparison base: revision source pins"
 		case "d":
 			if _, ok := m.selectedCheckpoint(); ok {
-				m.Panel = 2
+				// By name: a fixed index silently pointed at Tests once the
+				// Checkpoint tab was removed and the tabs shifted.
+				m.Panel = slices.Index(panels, "Changes")
 				m.clearArtifact()
 				m.DiffRequest = m.diffKey()
 				api, id, request := m.API, m.current().ID, m.DiffRequest

@@ -213,3 +213,13 @@ func TestTheDecisionLogIncludesQuestionsAndTheCoordinatorsStops(t *testing.T) {
 		}
 	}
 }
+
+func TestTheDiffKeyOpensChangesWhereverTheTabsAre(t *testing.T) {
+	m := modelFixture(t)
+	node := m.nodeID()
+	m.Runs[0].Current().Checkpoints[node] = workflow.Checkpoint{ID: "cp", Node: node}
+	m, _ = key(m, "d")
+	if got := panels[m.Panel]; got != "Changes" {
+		t.Fatalf("d opened %s, not Changes", got)
+	}
+}

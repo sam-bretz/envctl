@@ -111,8 +111,8 @@ The dashboard shows the stage strip, your in-flight runs, and a focused panel:
 | --- | --- |
 | `↑` `↓` | Move between runs |
 | `←` `→` | Move between stages |
-| `tab` | Cycle panels: Conversation, Checkpoint, Changes, Tests, Services, Readiness, Graph, History |
-| `i` | Write to the agent; `s` switches between worker and supervisor |
+| `tab` | Cycle panels: Chat, Checkpoint, Changes, Tests, Decision Log |
+| `i` | Steer the agent (this changes the work); `s` switches between worker and supervisor |
 | `d` | Diff the stage; `b` sets a comparison base, `B` clears it |
 | `o` | Open the selected artifact in your browser; `,` and `.` select |
 | `[` `]` | Browse revision history |
@@ -121,6 +121,8 @@ The dashboard shows the stage strip, your in-flight runs, and a focused panel:
 | `g` | Open the run's pull request in your browser |
 | `T` | Pick a color theme, with live preview |
 | `q` | Detach; execution continues |
+
+**Chat** leads with anything blocking the run — readiness problems Plan must resolve, recovery in progress, or a service down in the VM — then the stage's attempts, summaries and steering messages. **Checkpoint** shows the accepted result and which stages it runs after. **Decision Log** reads like a record of the run: when each thing was decided, by whom (worker, supervisor, you, or the coordinator), and why — Plan's findings, supervisor accepts and rejections with their corrections, your steering and approvals, and rewinds with what they reran and whether the objective or configuration changed.
 
 Closing the dashboard never stops the run. For scripts, `envctl run show <run> --json` has the same information.
 

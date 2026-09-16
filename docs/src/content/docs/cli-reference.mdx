@@ -55,7 +55,7 @@ envctl run message <run-id> --node code --to worker --text "keep the public API 
 
 `run show` prints each running attempt's phase (`worker`, `stack`, `checks`, `supervisor`), its current check, and its latest agent activity: messages, tool and command invocations, and check output. `--json` includes the same `progress` object on each attempt, with at most 20 lines of 300 bytes each. Activity comes from the harness's own event stream, redacted by the guest journal and again for configured credentials. It is display state only and never checkpoint evidence. Activity-only updates are written at most every few seconds; phase changes and deliveries are written at once.
 
-`run message` (and `i` in Bubble Tea) records a message against the current revision. `--node` limits it to one stage; without it, the message applies to every stage. `run show` and the Bubble Tea Conversation panel show where each message went:
+`run message` (and `i` in Bubble Tea) records a message against the current revision. `--node` limits it to one stage; without it, the message applies to every stage. `run show` and the Bubble Tea Chat panel show where each message went:
 
 - **included when … started**: the message existed when the agent's prompt was frozen.
 - **delivered live … (resume N)**: the message reached a running agent.

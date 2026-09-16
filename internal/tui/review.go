@@ -169,35 +169,6 @@ func checkpointSummary(cp workflow.Checkpoint, selected int) string {
 	}
 	return strings.Join(lines, "\n")
 }
-func (m Model) history() string {
-	r := m.current()
-	if r == nil {
-		return "No run selected."
-	}
-	lines := []string{"[ previous revision · ] next/current revision", "Viewing history leaves execution running.", ""}
-	for _, rev := range r.Revisions {
-		marker := " "
-		if rev.ID == m.viewRevision().ID {
-			marker = ">"
-		}
-		label := rev.State
-		if rev.ID == r.CurrentRevision {
-			label += " · current"
-		}
-		lines = append(lines, fmt.Sprintf("%s %s · %s\n  %s\n  Parent: %s · restored checkpoint: %s", marker, rev.ID, label, rev.Objective, rev.Parent, rev.FromCheckpoint))
-		order, _ := rev.Config.Workflow.Order()
-		for _, node := range order {
-			if cp, ok := rev.Checkpoints[node]; ok {
-				kind := "accepted"
-				if cp.HistoricalOnly {
-					kind = "historical only"
-				}
-				lines = append(lines, fmt.Sprintf("  %s: %s · %s", node, cp.ID, kind))
-			}
-		}
-	}
-	return strings.Join(lines, "\n")
-}
 func artifactPreview(raw []byte) string {
 	var value any
 	if json.Unmarshal(raw, &value) == nil {

@@ -86,7 +86,7 @@ func TestDashboardResizeAndReadiness(t *testing.T) {
 	}
 	m.Width = 120
 	m.Height = 40
-	m.Panel = 5
+	m = panel(t, m, "Chat")
 	if !strings.Contains(m.View().Content, "harness.worker: not probed") {
 		t.Fatal("missing readiness not visible")
 	}

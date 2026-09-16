@@ -106,7 +106,12 @@ type openedMsg struct {
 	err   error
 }
 
-var panels = []string{"Conversation", "Checkpoint", "Changes", "Tests", "Services", "Readiness", "Graph", "History"}
+// panels are the detail views. Services, Readiness and Graph were cut because
+// they did not help follow or steer a run: the preview URL is already in the
+// run summary, the readiness problems and recovery that can block a run now
+// lead the Chat panel whenever they exist, and a stage's dependencies are
+// shown on its Checkpoint. History became the Decision Log.
+var panels = []string{"Chat", "Checkpoint", "Changes", "Tests", "Decision Log"}
 
 func New(api API, root string) Model {
 	m := Model{API: api, Root: root, Width: 100, Height: 30, Recipient: "supervisor"}
@@ -802,16 +807,19 @@ func (m Model) footer(width int, compact bool) []string {
 		if m.Mode == "new-ref" {
 			label = "issue link (optional, Enter to skip)"
 		}
+		if m.Mode == "chat" {
+			label = "steer " + m.Recipient + " · changes the work"
+		}
 		if compact || width < 24 {
 			lines = append(lines, ansi.Truncate(t.bold().Render(label+" ")+input, width, ""))
 		} else {
 			lines = append(lines, t.box(label, []string{input}, width)...)
 		}
 	} else {
-		prompt := t.dim().Render("To ") + t.fg(t.accent()).Render(m.Recipient) +
-			t.dim().Render(" · i chat · n new · r rewind · a approve · c close · o artifact · d diff · p/P plugins · x cancel")
+		prompt := t.dim().Render("Steer ") + t.fg(t.accent()).Render(m.Recipient) +
+			t.dim().Render(" · i steer · n new · r rewind · a approve · c close · o artifact · d diff · p/P plugins · x cancel")
 		if compact {
-			prompt = t.dim().Render("i chat · c close · o artifact")
+			prompt = t.dim().Render("i steer · c close · o artifact")
 		}
 		lines = append(lines, ansi.Truncate(prompt, width, ""))
 	}
@@ -899,9 +907,22 @@ func (m Model) details() string {
 	rev := m.viewRevision()
 	node := m.nodeID()
 	switch panels[m.Panel] {
-	case "Conversation":
+	case "Chat":
 		agents := rev.Config.NodeAgents(node)
-		lines := []string{fmt.Sprintf("Worker model: %s · Supervisor model: %s", formatModelTUI(agents.Worker.Model), formatModelTUI(agents.Supervisor.Model))}
+		lines := blocking(rev, node)
+		// On an empty stage, what to do next matters more than which model is
+		// configured, and a small terminal only has room for a few lines.
+		if len(rev.Attempts) == 0 && len(rev.Messages) == 0 {
+			lines = append(lines, "No stage messages yet. Press i to steer the "+m.Recipient+".")
+		}
+		lines = append(lines, fmt.Sprintf("Worker model: %s · Supervisor model: %s", formatModelTUI(agents.Worker.Model), formatModelTUI(agents.Supervisor.Model)))
+		if len(rev.Config.Plugins) > 0 {
+			var attached []string
+			for _, p := range rev.Config.Plugins {
+				attached = append(attached, p.ID+"@"+p.Version)
+			}
+			lines = append(lines, "Plugins: "+strings.Join(attached, ", ")+" (p add or replace, P remove; reopens Plan)")
+		}
 		for _, a := range rev.Attempts {
 			if a.Node == node {
 				lines = append(lines, fmt.Sprintf("Worker attempt %d: %s", a.Number, a.State))
@@ -926,61 +947,26 @@ func (m Model) details() string {
 		}
 		for _, msg := range rev.Messages {
 			if msg.Node == "" || msg.Node == node {
-				lines = append(lines, "To "+msg.Recipient+": "+msg.Body+"\n  ["+rev.MessageStatus(msg)+"]")
+				lines = append(lines, "Steer "+msg.Recipient+": "+msg.Body+"\n  ["+rev.MessageStatus(msg)+"]")
 			}
-		}
-		if len(lines) == 1 {
-			return lines[0] + "\n\nNo stage messages yet. Press i to address the " + m.Recipient + "."
 		}
 		return strings.Join(lines, "\n\n")
-	case "Readiness":
-		if child := rev.ChildRuntimes[node]; child != nil {
-			return "Branch runtime for " + node + ":\n" + pretty(child) + "\n\nParent Plan requirements: " + strings.Join(rev.Requirements(), ", ")
-		}
-		problems := rev.ReadinessProblems(time.Now(), rev.Requirements())
-		var attachments []string
-		for _, p := range rev.Config.Plugins {
-			attachments = append(attachments, fmt.Sprintf("%s@%s  %s\nCapabilities: %s", p.ID, p.Version, p.Digest, strings.Join(p.Provides, ", ")))
-		}
-		pluginText := "\n\nInvocation plugins (p add/replace, P remove; reopens Plan):\n" + strings.Join(attachments, "\n")
-		if len(rev.DiscoveredRequirements) > 0 {
-			pluginText += "\n\nDiscovered during Plan:\n"
-			for _, requirement := range rev.DiscoveredRequirements {
-				pluginText += fmt.Sprintf("%s -> %s: %s\n", requirement.Capability, strings.Join(requirement.Nodes, ", "), requirement.Reason)
-			}
-		}
-		if rev.Recovery != nil {
-			problems = append(problems, fmt.Sprintf("%s: %s\nEvidence: %s\nRetry after: %s", rev.Recovery.Phase, rev.Recovery.Detail, rev.Recovery.EvidenceDigest, rev.Recovery.RetryAt.Format(time.RFC3339)))
-		}
-		if len(problems) == 0 {
-			return "All declared capabilities have current readiness evidence." + pluginText
-		}
-		return "Plan must resolve these before downstream execution:\n\n" + strings.Join(problems, "\n") + pluginText
-	case "Services":
-		if child := rev.ChildRuntimes[node]; child != nil {
-			return "Branch runtime for " + node + ":\n" + runtimeSummary(child.Runtime)
-		}
-		return runtimeSummary(rev.Runtime)
-	case "Graph":
-		order, _ := rev.Config.Workflow.Order()
-		lines := []string{}
-		for _, id := range order {
-			n := rev.Config.Workflow.Nodes[id]
-			lines = append(lines, fmt.Sprintf("%s [%s] <- %s", id, status(rev, id), strings.Join(n.Needs, ", ")))
-		}
-		return strings.Join(lines, "\n")
 	case "Checkpoint":
+		needs := ""
+		if deps := rev.Config.Workflow.Nodes[node].Needs; len(deps) > 0 {
+			needs = "Runs after: " + strings.Join(deps, ", ") + "\n\n"
+		}
 		if cp, ok := rev.Checkpoints[node]; ok {
-			return checkpointSummary(cp, m.ArtifactIndex)
+			return needs + checkpointSummary(cp, m.ArtifactIndex)
 		}
 		for _, a := range rev.Attempts {
 			if a.Node == node && a.State == "awaiting-approval" {
-				return "Awaiting approval of this exact result (a to approve):\n" + pretty(a.Result)
+				return needs + "Awaiting approval of this exact result (a to approve):\n" + pretty(a.Result)
 			}
 		}
-		return "No accepted checkpoint for " + node + "."
-	case "History":
-		return m.history()
+		return needs + "No accepted checkpoint for " + node + "."
+	case "Decision Log":
+		return m.decisionLog()
 	case "Changes":
 		base := "revision source pins"
 		if m.CompareRun == r.ID && m.CompareFrom != "" {

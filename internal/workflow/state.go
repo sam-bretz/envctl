@@ -134,7 +134,10 @@ type Revision struct {
 	Questions []Question `json:"questions,omitempty"`
 	// Notes are coordinator decisions no other field keeps: ceiling stops,
 	// stall nudges and publication results.
-	Notes                  []Note            `json:"notes,omitempty"`
+	Notes []Note `json:"notes,omitempty"`
+	// Variant marks this revision as one of several competing approaches a
+	// supervisor proposed. Nil for every ordinary revision.
+	Variant                *Variant          `json:"variant,omitempty"`
 	CreatedAt              time.Time         `json:"created_at"`
 	Recovery               *Recovery         `json:"recovery,omitempty"`
 	SourcePins             map[string]string `json:"source_pins,omitempty"`
@@ -420,6 +423,9 @@ func (r *Revision) ReadyNodes(now time.Time) []string {
 			continue
 		}
 		if _, ok := r.Checkpoints[id]; ok || r.Active(id) {
+			continue
+		}
+		if n.Kind == "change" && r.Undecided() {
 			continue
 		}
 		satisfied := true
@@ -936,7 +942,7 @@ func (r *Run) Rewind(node, objective string, config *Config, now time.Time) (str
 	return rev.ID, nil
 }
 func (r *Run) Message(revision, node, recipient, body string, now time.Time) error {
-	if revision != r.CurrentRevision {
+	if !r.Schedulable(revision) {
 		return errors.New("cannot steer a superseded revision")
 	}
 	if recipient != "supervisor" && recipient != "worker" {
@@ -945,7 +951,9 @@ func (r *Run) Message(revision, node, recipient, body string, now time.Time) err
 	if strings.TrimSpace(body) == "" {
 		return errors.New("message is empty")
 	}
-	rev := r.Current()
+	// The addressed revision, not the current one: while variations are being
+	// compared, steering one must not land on another.
+	rev := r.Revision(revision)
 	if node != "" {
 		if _, ok := rev.Config.Workflow.Nodes[node]; !ok {
 			return errors.New("unknown message node")

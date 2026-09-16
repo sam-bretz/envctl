@@ -27,6 +27,10 @@ type fixtureBackend struct {
 	planRequirements []workflow.Requirement
 	startRunning     bool // started jobs stay running until the test changes them
 	probeUsage       *workflow.Usage
+	// variations are what a stage's supervisor proposes, by node. Only the
+	// original revision proposes, as a real supervisor reviewing a variation
+	// would not be offered the chance to branch again.
+	variations map[string][]workflow.Variation
 }
 
 func (b *fixtureBackend) Prepare(_ context.Context, a Assignment) (Prepared, error) {
@@ -99,6 +103,9 @@ func (b *fixtureBackend) result(a Assignment) *workflow.Result {
 		r.Checks = append(r.Checks, workflow.CheckResult{Name: check.Name, Passed: true, EvidenceDigest: evidence.Digest, CommitsDigest: workflow.Digest(r.Commits)})
 	}
 	r.Review = workflow.Review{Accepted: true, Summary: "Fixture reviewed", EvidenceDigest: evidence.Digest, ResultDigest: r.WorkDigest()}
+	if a.Revision.Variant == nil {
+		r.Review.Variations = b.variations[a.Attempt.Node]
+	}
 	return r
 }
 

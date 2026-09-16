@@ -3,26 +3,17 @@ title: Supervisor-proposed variations
 description: How a supervisor's alternative approaches become isolated, comparable, choosable runs.
 ---
 
-Status: design, with the first slice implemented. Tracks [#10](https://github.com/sam-bretz/envctl/issues/10). This document defines the target and the order to build it in; it does not claim the execution layer exists.
+Status: implemented. Tracks [#10](https://github.com/sam-bretz/envctl/issues/10). This document records how variations work and why, including what building it turned up.
 
 ## The problem
 
 When a stage has two or three credible approaches, the worker picks one and the supervisor accepts or corrects it. The alternatives are never built, so "which approach is better?" is a judgement one agent makes silently rather than evidence a person compares.
 
-## What exists today
+## Proposals
 
-The first slice, implemented alongside this document:
+A stage opts in with `variations: N`. Its supervisor may then propose that many alternatives alongside accepting the work, each with a name and a rationale, through `agent.AssessmentSchemaFor`; every other stage keeps the unchanged contract. Proposals are made **alongside** acceptance, never instead of it, so the attempt state machine is untouched and a stage whose supervisor proposes nothing behaves exactly as before.
 
-| Piece | Where |
-| --- | --- |
-| Opt-in per node: `variations: N`, 2 to 3, default off | `Node.Variations`, validated in `Config.Validate` |
-| Supervisor contract offers `variations` only to opted-in nodes | `agent.AssessmentSchemaFor`, `ParseAssessmentFor` |
-| Proposals recorded durably with the accepting review | `Review.Variations` |
-| Visible in `envctl run show --json` and the dashboard Checkpoint | `checkpointSummary` |
-
-Proposals are made **alongside** acceptance, never instead of it. The attempt state machine is unchanged, so an opted-in stage behaves exactly as before, and the proposals are evidence the execution layer can later act on. The dashboard labels them *considered, not built* so nothing implies a comparison that does not yet exist.
-
-Two invariants are tested and must survive every later step:
+Two invariants are tested and hold throughout:
 
 - **Approval binding.** `Result.WorkDigest` clears `Review`, so recording variations never changes what an approval is bound to.
 - **Configuration identity.** `variations: 0` restores an existing configuration's digest exactly.
@@ -45,9 +36,9 @@ The issue left open whether variations branch at Design or at Code, and whether 
 
 Each variation reruns the proposing node with its name and rationale added as steering, then continues downstream through QA. Branching at Design therefore produces a separate design, implementation and test run per alternative; branching at Code keeps the accepted design and varies only the implementation. Both are legitimate, and the cost difference between them is exactly the choice a person should be making.
 
-## Target flow
+## Flow
 
-1. An opted-in stage's supervisor accepts the work and proposes two or three variations. *(Implemented.)*
+1. An opted-in stage's supervisor accepts the work and proposes two or three variations.
 2. The coordinator forks one sibling revision per variation from the checkpoint *before* the proposing node. The accepted work continues as its own variation, "as proposed".
 3. Each variation runs to QA in its own worktree and runtime. **None reaches the approved-change gate**: no variation can publish before a person chooses.
 4. The dashboard and `run show --json` show every finished variation side by side: summary, supervisor rationale, diff, the checks run against which commit, and token usage.
@@ -59,14 +50,19 @@ Each variation reruns the proposing node with its name and rationale added as st
 - **Publication.** The only guard against a variation opening a pull request is that it never reaches approved-change before `choose`. That guard needs its own test, because a regression would publish work nobody picked.
 - **Cost.** A Design-to-QA pass has measured around 10M tokens, so three variations from Design is roughly 30M. `variations` is capped at 3 for this reason, and the run token ceiling stops the rest.
 
-## Delivery order
+## What building it turned up
 
-Each step ships independently behind the opt-in, so an unfinished step changes nothing for workflows that do not set `variations`.
+- **A deadlock with the default limits.** `limits.vms` defaults to 2, but even two proposals make three revisions, and a finished variation waiting to be chosen kept its VM. The last sibling could never start. A finished, undecided variation now parks — releases its VM — while a sibling is queued, and `Run.VMCount` does not count a parked variation, since it stays `active` so it is not mistaken for a retired one. Choosing a parked variation queues it for a VM again, the same path a rewound revision resumes by.
+- **Steering the wrong revision.** `Run.Message` wrote to the current revision whatever was addressed. During a comparison that is a different variation, so a message would silently land on another candidate. It now writes to the addressed revision.
+- **The current-revision assumption.** The engine and daemon guarded work with `CurrentRevision` checks in eight places, which would have left every sibling queued forever. They now accept undecided variations. The daemon's guard admits a variation only for `message`, `ask` and `choose`: a `rewind` addressed to a variation would otherwise rewind the current revision out from under the comparison.
 
-| Step | Scope | State |
-| --- | --- | --- |
-| 1 | Opt-in, supervisor contract, durable proposals, visibility | **Done** |
-| 2 | Several concurrent sibling revisions; `Rewind` no longer the only way to fork | Not started |
-| 3 | Variations stop before approved-change; `choose` action and `not-chosen` state; publication guard test | Not started |
-| 4 | Side-by-side comparison in the dashboard and `run show --json` | Not started |
-| 5 | Capacity: queue variations under `limits.vms` | Not started |
+## Delivery
+
+| Piece | Where |
+| --- | --- |
+| Opt-in, supervisor contract, durable proposals | `Node.Variations`, `agent.AssessmentSchemaFor`, `Review.Variations` |
+| Branching into sibling revisions | `Run.Branch`, triggered in the mutation that accepts the proposing stage |
+| Holding back approval | `Revision.ReadyNodes` skips `change` stages while undecided; publication refuses as well |
+| Choosing | `Run.Choose`, daemon action `choose`, `envctl run choose`, `C` in the dashboard |
+| Side-by-side comparison | `Run.CompareVariations`, `review.CompareVariations`, `envctl run variations`, `v` in the dashboard |
+| Capacity | parking in `Engine.parkVariation`, `Revision.Parked`, `Run.VMCount` |

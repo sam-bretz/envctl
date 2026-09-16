@@ -196,7 +196,7 @@ func lane(v *workflow.Revision) (string, string) {
 			reason += ": " + v.Recovery.Detail
 		}
 		return "attention", reason
-	case "completed", "cancelled", "superseded":
+	case "completed", "cancelled", "superseded", workflow.NotChosen:
 		return "finished", ""
 	}
 	return "running", ""

@@ -302,6 +302,7 @@ func runCmd(g *globals) *cobra.Command {
 	for _, kind := range []string{"message", "ask", "rewind", "cancel", "close", "approve", "priority"} {
 		c.AddCommand(runActionCmd(g, kind))
 	}
+	c.AddCommand(variationsCmd(g), chooseCmd(g))
 	plugins := &cobra.Command{Use: "plugin", Short: "Change invocation plugins and reopen Plan in a new revision"}
 	for _, item := range []struct{ name, action string }{{"add", "plugin-attach"}, {"remove", "plugin-remove"}} {
 		command := runActionCmd(g, item.action)
@@ -502,6 +503,7 @@ func printRun(cmd *cobra.Command, g *globals, r *workflow.Run) error {
 	fmt.Fprintf(out, "  VM: %s\n", vm)
 	printAttention(out, r)
 	printQuestions(out, rev)
+	printVariationStatus(out, r)
 	printRuntime(out, "", rev.Runtime)
 	for node, child := range rev.ChildRuntimes {
 		if child != nil && (child.Runtime.PreviewURL != "" || len(child.Runtime.Services) > 0) {

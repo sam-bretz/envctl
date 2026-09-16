@@ -31,9 +31,18 @@ Version 2 workflow state belongs to its persistent coordinator. These commands i
 envctl run diff <run-id> --node code
 envctl run diff <run-id> --node qa --revision <revision-id> --from <checkpoint-id> --json
 envctl run artifact <digest> --output <new-file>
+envctl run artifact <digest> --open           # read it in your browser
 ```
 
 `diff` defaults to comparing the selected checkpoint against its revision's immutable source pins. `--from` selects any recorded checkpoint in the same run, including historical revisions. The response includes source patches, checkpoint summaries, checks, approvals, and artifact/dataset identities. Repository patches are bounded to 1 MiB each and explicitly report truncation or unavailable retained source. Binary files and LFS objects are represented by Git's binary/pointer differences; database rows are not diffed. `artifact` verifies the transferred checksum and refuses to overwrite existing output.
+
+### Reading an artifact
+
+Stage documents are Markdown and often long, so `o` in the dashboard (and `run artifact --open`) opens the selected artifact as a rendered page in your browser instead of as raw text in the terminal panel. Markdown gets headings, lists, tables, links and highlighted code; JSON is pretty-printed; base64 `screenshot_png` fields from the Playwright plugin become images. The page names the run, revision, stage and attempt the artifact came from, with its digest and size, and links the checkpoint's other artifacts so moving between plan, design and test results needs no terminal.
+
+The page is served by the same loopback-only dashboard server, on `127.0.0.1` with the same per-session token, and loads nothing from the network: the Markdown is rendered in Go and the highlighter is built in, so no CDN or web font is fetched. Artifacts are agent-written, so raw HTML in them is escaped rather than rendered and dangerous link targets are dropped. Content is the same checksum-verified bytes `run artifact --output` writes.
+
+Where no browser can be opened — an SSH session, or no `open`/`xdg-open` — the terminal preview is used instead and says why.
 
 In Bubble Tea, `d` opens the comparison. `b` selects the current checkpoint as the comparison base; navigate to the target and press `d`. `B` resets the base, and Escape closes the loaded review. Selection and review never mutate the workflow.
 

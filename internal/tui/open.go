@@ -6,8 +6,9 @@ import (
 	"runtime"
 )
 
-// OpenInBrowser hands a URL to the platform's opener without waiting for the
-// browser, so the dashboard stays responsive.
+// OpenInBrowser hands a URL to the platform's opener. Waiting for the opener
+// command to report failure is necessary so callers can show a terminal
+// fallback when an SSH session has no browser integration.
 func OpenInBrowser(url string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
@@ -18,9 +19,5 @@ func OpenInBrowser(url string) error {
 	default:
 		return errors.New("no browser opener for " + runtime.GOOS)
 	}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	go func() { _ = cmd.Wait() }()
-	return nil
+	return cmd.Run()
 }

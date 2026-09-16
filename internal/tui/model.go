@@ -70,6 +70,10 @@ type Model struct {
 	Picker     *themePicker
 	// OpenURL opens a link in the user's browser; tests substitute it.
 	OpenURL func(string) error
+	// OpenArtifact hands a retained artifact to a browser view. A failure is
+	// shown to the user and the same verified bytes are rendered in the panel.
+	OpenArtifact   func(workflow.Artifact, workflow.Run, workflow.Revision, workflow.Checkpoint) error
+	BrowserWarning string
 	// refreshFailed marks Error as a refresh failure, the only kind a later
 	// successful refresh may clear. Action errors stay until the next action.
 	refreshFailed bool
@@ -84,9 +88,11 @@ type actionMsg struct {
 	notice string // replaces the generic "Saved"
 }
 type artifactMsg struct {
-	key  string
-	body []byte
-	err  error
+	key      string
+	body     []byte
+	err      error
+	fallback string
+	opened   bool
 }
 type diffMsg struct {
 	key        string
@@ -203,11 +209,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if v.key != m.ArtifactRequest || v.key != m.viewKey() {
 			return m, nil
 		}
-		if v.err != nil {
+		if v.opened {
+			m.Error = ""
+			m.Notice = "Opened artifact in the browser"
+		} else if v.err != nil {
 			m.Error = v.err.Error()
 		} else {
 			m.ArtifactText = artifactPreview(v.body)
 			m.Offset = 0
+			m.Error = ""
+			if v.fallback != "" {
+				m.Notice = "Browser unavailable (" + v.fallback + "); showing the terminal preview"
+			}
 		}
 	case diffMsg:
 		if v.key != m.DiffRequest || v.key != m.diffKey() {
@@ -473,14 +486,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "o":
 			if cp, ok := m.selectedCheckpoint(); ok && len(cp.Result.Artifacts) > 0 {
 				m.DiffRequest = ""
+				m.ArtifactText = ""
 				artifact := cp.Result.Artifacts[min(m.ArtifactIndex, len(cp.Result.Artifacts)-1)]
 				m.ArtifactRequest = m.viewKey()
-				api, digest, request := m.API, artifact.Digest, m.ArtifactRequest
+				api, digest, request, opener := m.API, artifact.Digest, m.ArtifactRequest, m.OpenArtifact
+				run, revision, checkpoint := *m.current(), *m.viewRevision(), cp
+				warning := m.BrowserWarning
 				return m, func() tea.Msg {
+					if opener != nil {
+						if err := opener(artifact, run, revision, checkpoint); err == nil {
+							return artifactMsg{key: request, opened: true}
+						} else {
+							warning = err.Error()
+						}
+					}
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					defer cancel()
 					raw, err := api.Artifact(ctx, digest)
-					return artifactMsg{key: request, body: raw, err: err}
+					return artifactMsg{key: request, body: raw, err: err, fallback: warning}
 				}
 			}
 		case "b":
@@ -961,6 +984,10 @@ type Options struct {
 	Settings   Settings
 	// Warning is shown on the first frame, for example an unreadable config.
 	Warning string
+	// OpenArtifact opens a document in the browser and is optional so the TUI
+	// remains useful over SSH or on systems without a browser opener.
+	OpenArtifact   func(workflow.Artifact, workflow.Run, workflow.Revision, workflow.Checkpoint) error
+	BrowserWarning string
 }
 
 func Run(ctx context.Context, api API, root string, opts Options) error {
@@ -970,6 +997,8 @@ func Run(ctx context.Context, api API, root string, opts Options) error {
 	m.Theme.override = opts.Theme
 	m.Theme.resolve()
 	m.Error = opts.Warning
+	m.OpenArtifact = opts.OpenArtifact
+	m.BrowserWarning = opts.BrowserWarning
 	_, err := tea.NewProgram(m, tea.WithContext(ctx)).Run()
 	return err
 }

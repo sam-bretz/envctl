@@ -102,6 +102,21 @@ func launchTUI(cmd *cobra.Command, g *globals, themeName string) error {
 	if err != nil {
 		return err
 	}
+	webSession, _, webErr := startWebSession(cmd.Context(), g, client, "127.0.0.1:0")
+	if webErr != nil {
+		opts.BrowserWarning = webErr.Error()
+	} else {
+		opts.OpenArtifact = func(artifact workflow.Artifact, _ workflow.Run, _ workflow.Revision, _ workflow.Checkpoint) error {
+			return tui.OpenInBrowser(webSession.ArtifactURL(artifact.Digest))
+		}
+	}
+	if webSession != nil {
+		defer func() {
+			shutdown, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = webSession.Close(shutdown)
+		}()
+	}
 	return tui.Run(cmd.Context(), client, workflowRoot(cmd.Context(), g.dir), opts)
 }
 

@@ -138,3 +138,30 @@ func TestRefreshPreservesSelectedRun(t *testing.T) {
 		t.Fatal("selection jumped after reorder")
 	}
 }
+
+func TestBrowserFailureFallsBackToTheVerifiedTerminalPreview(t *testing.T) {
+	m := modelFixture(t)
+	m.Runs[0].Current().Checkpoints["plan"] = workflow.Checkpoint{
+		Node:    "plan",
+		Attempt: "attempt_1",
+		Result:  workflow.Result{Artifacts: []workflow.Artifact{{Name: "plan.md", Digest: strings.Repeat("a", 64), MediaType: "text/markdown"}}},
+	}
+	m.OpenArtifact = func(workflow.Artifact, workflow.Run, workflow.Revision, workflow.Checkpoint) error {
+		return errors.New("xdg-open is unavailable")
+	}
+	order, _ := m.viewRevision().Config.Workflow.Order()
+	for i, id := range order {
+		if id == "plan" {
+			m.Node = i
+		}
+	}
+	m, cmd := key(m, "o")
+	if cmd == nil {
+		t.Fatal("o did not request an artifact")
+	}
+	next, _ := m.Update(cmd())
+	m = next.(Model)
+	if m.ArtifactText != "artifact" || !strings.Contains(m.Notice, "Browser unavailable (xdg-open is unavailable)") {
+		t.Fatalf("fallback preview: notice %q text %q", m.Notice, m.ArtifactText)
+	}
+}

@@ -157,11 +157,14 @@ func (e *Engine) Tick(ctx context.Context) error {
 				continue
 			}
 			if rev.State == "queued" {
-				if rev.ID != run.CurrentRevision || occupied >= rev.Config.Limits.VMs {
+				// Undecided variations start beside the current revision, and
+				// limits.vms still bounds how many hold a VM at once, so the
+				// rest queue rather than fail.
+				if !run.Schedulable(rev.ID) || occupied >= rev.Config.Limits.VMs {
 					continue
 				}
 				_, err = e.update(ctx, run.ID, rev.ID, "runtime.reserved", func(r *workflow.Run, v *workflow.Revision) error {
-					if v.State != "queued" || r.CurrentRevision != v.ID || r.VMCount() >= v.Config.Limits.VMs {
+					if v.State != "queued" || !r.Schedulable(v.ID) || r.VMCount() >= v.Config.Limits.VMs {
 						return workflow.ErrConflict
 					}
 					v.State = "preparing"
@@ -176,7 +179,7 @@ func (e *Engine) Tick(ctx context.Context) error {
 				}
 				occupied++
 			}
-			if slices.Contains([]string{"completed", "superseded", "cancelled"}, rev.State) && (!rev.Runtime.Ready && rev.Runtime.State != "preparing") {
+			if slices.Contains([]string{"completed", "superseded", "cancelled", workflow.NotChosen}, rev.State) && (!rev.Runtime.Ready && rev.Runtime.State != "preparing") {
 				continue
 			}
 			if rev.Recovery != nil && rev.Recovery.RetryAt.After(e.now()) {
@@ -266,14 +269,14 @@ func (e *Engine) Reconcile(ctx context.Context, id, revision string) error {
 			v.Runtime = prepared.Runtime
 			v.SourcePins = workflow.Clone(prepared.SourcePins)
 			v.Recovery = nil
-			if v.State == "preparing" && r.CurrentRevision == v.ID {
+			if v.State == "preparing" && r.Schedulable(v.ID) {
 				v.State = "active"
 			}
 			return nil
 		})
 		return err
 	}
-	if slices.Contains([]string{"cancelled", "superseded"}, rev.State) || (rev.State == "completed" && !run.ClosedAt.IsZero()) {
+	if slices.Contains([]string{"cancelled", "superseded", workflow.NotChosen}, rev.State) || (rev.State == "completed" && !run.ClosedAt.IsZero()) {
 		if rev.HasChildVMs() {
 			return nil
 		}
@@ -294,6 +297,9 @@ func (e *Engine) Reconcile(ctx context.Context, id, revision string) error {
 			v.Recovery = nil
 			return nil
 		})
+		return err
+	}
+	if parked, err := e.parkVariation(ctx, run, rev); parked || err != nil {
 		return err
 	}
 	if rev.State != "active" && rev.State != "draining" {
@@ -432,7 +438,7 @@ func (e *Engine) Reconcile(ctx context.Context, id, revision string) error {
 		}
 		for _, node := range ready {
 			_, err = e.update(ctx, id, revision, "attempt.started", func(r *workflow.Run, v *workflow.Revision) error {
-				if r.CurrentRevision != revision && v.State != "draining" {
+				if !r.Schedulable(revision) && v.State != "draining" {
 					return workflow.ErrConflict
 				}
 				if e.childRequired(v, node) && v.ChildRuntimes[node] == nil && r.VMCount() >= v.Config.Limits.VMs {
@@ -637,4 +643,36 @@ func (e *Engine) backfillUsage(ctx context.Context, run *workflow.Run, revision 
 		return nil
 	})
 	return true, err
+}
+
+// parkVariation releases the VM of a variation that has finished and is
+// waiting to be chosen, when a sibling is queued for capacity. Comparing
+// variations needs no VM, since diffs and checks come from retained evidence,
+// but every finished variation holding one would stop the rest from ever
+// starting: with the default limits.vms of 2, even two proposals make three
+// revisions. Choosing a parked variation queues it for a VM again.
+func (e *Engine) parkVariation(ctx context.Context, run *workflow.Run, rev *workflow.Revision) (bool, error) {
+	if rev.State != "active" || !rev.Undecided() || !rev.Finished() || rev.HasActive() || !rev.Runtime.Ready || rev.HasChildVMs() {
+		return false, nil
+	}
+	waiting := false
+	for _, sibling := range run.Variations(rev.Variant.Group) {
+		waiting = waiting || sibling.State == "queued"
+	}
+	if !waiting {
+		return false, nil
+	}
+	if err := e.Backend.Release(ctx, assign(run, rev, nil)); err != nil {
+		return true, e.recover(ctx, run.ID, rev.ID, "release", err)
+	}
+	_, err := e.update(ctx, run.ID, rev.ID, "variation.parked", func(_ *workflow.Run, v *workflow.Revision) error {
+		if !v.Undecided() || !v.Runtime.Ready {
+			return workflow.ErrConflict
+		}
+		v.Runtime.Ready = false
+		v.Runtime.State = "stopped"
+		v.Runtime.PreviewURL = ""
+		return nil
+	})
+	return true, ignoreConflict(err)
 }

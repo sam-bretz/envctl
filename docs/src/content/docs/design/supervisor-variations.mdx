@@ -1,0 +1,68 @@
+---
+title: Supervisor-proposed variations
+description: How a supervisor's alternative approaches become isolated, comparable, choosable runs.
+---
+
+Status: implemented. Tracks [#10](https://github.com/sam-bretz/envctl/issues/10). This document records how variations work and why, including what building it turned up.
+
+## The problem
+
+When a stage has two or three credible approaches, the worker picks one and the supervisor accepts or corrects it. The alternatives are never built, so "which approach is better?" is a judgement one agent makes silently rather than evidence a person compares.
+
+## Proposals
+
+A stage opts in with `variations: N`. Its supervisor may then propose that many alternatives alongside accepting the work, each with a name and a rationale, through `agent.AssessmentSchemaFor`; every other stage keeps the unchanged contract. Proposals are made **alongside** acceptance, never instead of it, so the attempt state machine is untouched and a stage whose supervisor proposes nothing behaves exactly as before.
+
+Two invariants are tested and hold throughout:
+
+- **Approval binding.** `Result.WorkDigest` clears `Review`, so recording variations never changes what an approval is bound to.
+- **Configuration identity.** `variations: 0` restores an existing configuration's digest exactly.
+
+## The constraint that shapes everything
+
+`Revision.Checkpoints` is a `map[string]Checkpoint` keyed by node: exactly one result per stage. Variations need several competing results for the same stages. Three ways to represent that:
+
+1. **Variation-scoped node IDs** (`code@polling`), expanding the DAG at runtime. Rejected: it mutates a configuration that is frozen into the revision and breaks its digest identity, and node-keyed maps appear throughout the engine.
+2. **Nested checkpoints** (`map[node]map[variation]Checkpoint`). Rejected: it changes every reader of checkpoints for a feature most runs never use.
+3. **Sibling revisions.** Each variation is its own `Revision`, forked from the same parent. **Recommended.**
+
+Sibling revisions fit because isolation is already per revision. A revision has its own checkpoints, attempts, runtime and source pins, and its output branch is derived from its ID (`OutputBranch(repo, rev.ID)`), so two variations cannot write to the same branch. `envctl run diff` already compares checkpoints across revisions, which is most of the side-by-side view. And the run token ceiling already counts usage across all revisions, so variations are bounded by `limits.run_tokens` without new accounting.
+
+What does not fit yet: revisions today form a linear chain. `Rewind` marks the previous revision `superseded`, and `Run.CurrentRevision` names exactly one. Variations need several revisions active at once, with none superseding the others until a person chooses.
+
+## Where variations branch
+
+The issue left open whether variations branch at Design or at Code, and whether the person or the supervisor picks the stage. **The node that proposes them is the branch point, and the person chooses it by where they set `variations`.** The supervisor chooses *which* alternatives; it never chooses where branching happens.
+
+Each variation reruns the proposing node with its name and rationale added as steering, then continues downstream through QA. Branching at Design therefore produces a separate design, implementation and test run per alternative; branching at Code keeps the accepted design and varies only the implementation. Both are legitimate, and the cost difference between them is exactly the choice a person should be making.
+
+## Flow
+
+1. An opted-in stage's supervisor accepts the work and proposes two or three variations.
+2. The coordinator forks one sibling revision per variation from the checkpoint *before* the proposing node. The accepted work continues as its own variation, "as proposed".
+3. Each variation runs to QA in its own worktree and runtime. **None reaches the approved-change gate**: no variation can publish before a person chooses.
+4. The dashboard and `run show --json` show every finished variation side by side: summary, supervisor rationale, diff, the checks run against which commit, and token usage.
+5. A new `choose` action makes one variation current and continues it to approval. The others move to a new terminal state, `not-chosen`, and stay reviewable as history. They are never published.
+
+## Risks
+
+- **Capacity.** Each variation holds a VM. `limits.vms` must bound how many run at once, with the rest queued rather than failing. On a single machine this matters more than tokens.
+- **Publication.** The only guard against a variation opening a pull request is that it never reaches approved-change before `choose`. That guard needs its own test, because a regression would publish work nobody picked.
+- **Cost.** A Design-to-QA pass has measured around 10M tokens, so three variations from Design is roughly 30M. `variations` is capped at 3 for this reason, and the run token ceiling stops the rest.
+
+## What building it turned up
+
+- **A deadlock with the default limits.** `limits.vms` defaults to 2, but even two proposals make three revisions, and a finished variation waiting to be chosen kept its VM. The last sibling could never start. A finished, undecided variation now parks — releases its VM — while a sibling is queued, and `Run.VMCount` does not count a parked variation, since it stays `active` so it is not mistaken for a retired one. Choosing a parked variation queues it for a VM again, the same path a rewound revision resumes by.
+- **Steering the wrong revision.** `Run.Message` wrote to the current revision whatever was addressed. During a comparison that is a different variation, so a message would silently land on another candidate. It now writes to the addressed revision.
+- **The current-revision assumption.** The engine and daemon guarded work with `CurrentRevision` checks in eight places, which would have left every sibling queued forever. They now accept undecided variations. The daemon's guard admits a variation only for `message`, `ask` and `choose`: a `rewind` addressed to a variation would otherwise rewind the current revision out from under the comparison.
+
+## Delivery
+
+| Piece | Where |
+| --- | --- |
+| Opt-in, supervisor contract, durable proposals | `Node.Variations`, `agent.AssessmentSchemaFor`, `Review.Variations` |
+| Branching into sibling revisions | `Run.Branch`, triggered in the mutation that accepts the proposing stage |
+| Holding back approval | `Revision.ReadyNodes` skips `change` stages while undecided; publication refuses as well |
+| Choosing | `Run.Choose`, daemon action `choose`, `envctl run choose`, `C` in the dashboard |
+| Side-by-side comparison | `Run.CompareVariations`, `review.CompareVariations`, `envctl run variations`, `v` in the dashboard |
+| Capacity | parking in `Engine.parkVariation`, `Revision.Parked`, `Run.VMCount` |

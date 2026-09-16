@@ -30,9 +30,15 @@ func decisions(r *workflow.Run) []decision {
 	for i := range r.Revisions {
 		rev := &r.Revisions[i]
 		plan := rev.Config.Workflow.PlanID()
-		if rev.Parent == "" {
+		switch parent := r.Revision(rev.Parent); {
+		case rev.Parent == "":
 			out = append(out, decision{At: rev.CreatedAt, Actor: "coordinator", Reason: "run started: " + firstLine(rev.Objective)})
-		} else if parent := r.Revision(rev.Parent); parent != nil {
+		case rev.Variant != nil && rev.Variant.Name != workflow.AsProposed:
+			// A sibling variation has a parent but is not a rewind: the
+			// supervisor proposed it.
+			out = append(out, decision{At: rev.CreatedAt, Stage: rev.Variant.Node, Actor: "supervisor",
+				Reason: fmt.Sprintf("proposed building %s: %s", rev.Variant.Name, firstLine(rev.Variant.Rationale))})
+		case parent != nil:
 			out = append(out, decision{At: rev.CreatedAt, Stage: rewoundTo(rev), Actor: "you", Reason: rewindReason(parent, rev)})
 		}
 		// Plan's accepted result is where the scope of the work was decided.
@@ -86,7 +92,11 @@ func decisions(r *workflow.Run) []decision {
 		// causes back from the captain's log, which exists only when a tracker
 		// is configured.
 		for _, n := range rev.Notes {
-			out = append(out, decision{At: n.At, Stage: n.Node, Actor: "coordinator", Reason: noteReason(n)})
+			actor := "coordinator"
+			if n.Kind == workflow.NoteChosen {
+				actor = "you"
+			}
+			out = append(out, decision{At: n.At, Stage: n.Node, Actor: actor, Reason: noteReason(n)})
 		}
 	}
 	slices.SortStableFunc(out, func(a, b decision) int { return a.At.Compare(b.At) })
@@ -110,6 +120,8 @@ func noteReason(n workflow.Note) string {
 		return "opened the pull request: " + firstLine(n.Detail)
 	case workflow.NotePublishFailed:
 		return "could not publish: " + firstLine(n.Detail)
+	case workflow.NoteChosen:
+		return firstLine(n.Detail) + "; the others were retired and will not be published"
 	}
 	return firstLine(n.Detail)
 }

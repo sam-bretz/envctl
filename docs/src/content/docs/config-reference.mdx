@@ -121,6 +121,39 @@ Rules for every workflow:
 
 Pick a workflow with `envctl run create --workflow small`, with `tab` in the dashboard's new-run input, or with the `workflow` argument of the MCP `envctl_create` tool. `envctl run workflows` lists them with their stages. A run stores only the workflow it selected, and a rewind with `--config` keeps using that workflow.
 
+## Workflow variations (version 2, experimental)
+
+`workflow.nodes.<id>.variations` lets that stage's supervisor propose alternative approaches it judged credible, recorded alongside its acceptance so a choice between designs is not made silently by one agent.
+
+```yaml
+workflow:
+  template: feature
+  nodes:
+    design:
+      variations: 3
+```
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `workflow.nodes.<id>.variations` | integer | `0` (off) | `0`, or `2` to `3`: the most alternatives the supervisor may propose. Unset keeps the configuration digest unchanged. |
+
+The supervisor proposes variations only when it accepts the work, each with a name and a rationale, and proposes none when the approach taken is clearly right.
+
+When it does, envctl builds each one. The accepted work continues as **as proposed**, and every alternative gets its own sibling revision, restored from before that stage, with the alternative given to its worker as steering. Each runs that stage and everything after it through QA in its own worktree and VM, so variations cannot touch each other's source or data. **No variation reaches its approved change**: none can be approved or published until you choose.
+
+```bash
+envctl run variations <run>                         # side by side
+envctl run choose <run> --variation streaming       # continue one
+```
+
+`run variations` shows each variation's rationale, stage summaries, the size of its change (from retained evidence, against the last stage with commits), the checks it ran and whether they passed, and its token usage; `--json` for the structured form. In the dashboard, the run summary says a comparison is waiting; `v` opens it and `C` chooses. You can steer or ask a variation while it builds.
+
+Choosing continues that variation to its approved change and makes it the run's current revision. The others become **not chosen**: their VMs are released and their checkpoints stay reviewable, but they are never published.
+
+Every variation counts toward `limits.run_tokens`, and `limits.vms` still bounds how many hold a VM at once, so the rest queue. A variation that has finished and is waiting to be chosen gives up its VM while a sibling is queued for one; comparing needs no VM, and choosing a variation that gave its up provisions a new one and restores its source from its checkpoints. A variation never branches again, so `variations` bounds the work.
+
+How and why it works this way is in the [supervisor-proposed variations design](/envctl/design/supervisor-variations/).
+
 ## Workflow limits (version 2, experimental)
 
 Version 2 workflow configurations set revision-wide limits under `limits`. A workflow node can override the attempt budget for its own assignments under `workflow.nodes.<id>.limits`. See the [workflow runtime design](/envctl/design/workflow-runtime/#child-runtimes-for-parallel-execution).

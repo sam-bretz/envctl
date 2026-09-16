@@ -42,7 +42,14 @@ func chatThread(rev *workflow.Revision, node string) []chatEntry {
 		case a.State == "failed":
 			out = append(out, chatEntry{At: a.UpdatedAt, Who: "coordinator", Kind: "status", Text: fmt.Sprintf("attempt %d failed: %s", a.Number, a.Error)})
 		case a.Result != nil && a.Result.Review.Accepted:
-			out = append(out, chatEntry{At: a.UpdatedAt, Who: "supervisor", Kind: "review", Text: "accepted: " + a.Result.Review.Summary})
+			text := "accepted: " + a.Result.Review.Summary
+			if vs := a.Result.Review.Variations; len(vs) > 0 {
+				text += "\nproposed alternatives, each built for comparison:"
+				for _, v := range vs {
+					text += "\n  " + v.Name + " — " + v.Rationale
+				}
+			}
+			out = append(out, chatEntry{At: a.UpdatedAt, Who: "supervisor", Kind: "review", Text: text})
 		}
 		if a.State == "awaiting-approval" {
 			out = append(out, chatEntry{At: a.UpdatedAt, Who: "coordinator", Kind: "status", Text: "waiting for your approval · a to approve"})
@@ -115,6 +122,21 @@ func (m Model) chat() string {
 	node := m.nodeID()
 	agents := rev.Config.NodeAgents(node)
 	head := []string{fmt.Sprintf("Worker model: %s · Supervisor model: %s", formatModelTUI(agents.Worker.Model), formatModelTUI(agents.Supervisor.Model))}
+	if v := rev.Variant; v != nil {
+		banner := "Variation: " + v.Name
+		if v.Rationale != "" {
+			banner += " — " + firstLine(v.Rationale)
+		}
+		switch {
+		case rev.State == workflow.NotChosen:
+			banner += " (not chosen)"
+		case v.Chosen:
+			banner += " (chosen)"
+		default:
+			banner += " (comparing · v to compare, C to choose)"
+		}
+		head = append([]string{banner}, head...)
+	}
 	// A stage's dependencies are the part of the old Graph tab worth keeping.
 	if deps := rev.Config.Workflow.Nodes[node].Needs; len(deps) > 0 {
 		head = append(head, "Runs after: "+strings.Join(deps, ", "))
@@ -192,4 +214,16 @@ func (m Model) chatArtifacts(rev *workflow.Revision, node string) string {
 		lines = append(lines, fmt.Sprintf("%s %s · %s · %d bytes", marker, a.Name, a.MediaType, a.Size))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// undecided returns the run's comparison still waiting for a choice, if any.
+func undecided(r workflow.Run) string {
+	for _, group := range r.VariationGroups() {
+		for _, v := range r.Variations(group) {
+			if v.Undecided() {
+				return group
+			}
+		}
+	}
+	return ""
 }

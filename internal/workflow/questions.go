@@ -45,10 +45,10 @@ func (q Question) Finished() bool { return q.State == QuestionAnswered || q.Stat
 
 // Ask records a question for a stage's supervisor on the current revision.
 func (r *Run) Ask(revision, node, text, asker string, now time.Time) (string, error) {
-	if revision != r.CurrentRevision {
-		return "", errors.New("questions go to the current revision; an older one no longer has a running supervisor")
+	if !r.Schedulable(revision) {
+		return "", errors.New("questions go to the current revision or a variation still being compared; an older one no longer has a running supervisor")
 	}
-	rev := r.Current()
+	rev := r.Revision(revision)
 	if _, ok := rev.Config.Workflow.Nodes[node]; !ok {
 		return "", fmt.Errorf("workflow has no stage %q", node)
 	}

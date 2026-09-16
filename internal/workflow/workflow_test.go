@@ -495,3 +495,48 @@ func TestBuiltinReadinessCannotBeRemovedByTemplateOverride(t *testing.T) {
 		t.Fatal("mandatory execution capabilities omitted")
 	}
 }
+
+func TestVariationsAreOffUnlessANodeOptsInWithinBounds(t *testing.T) {
+	base := "version: 2\nproject: demo\nrepositories: [{id: app, url: /source}]\nworkflow: {template: feature}\n"
+	c, err := Parse([]byte(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := Digest(c)
+	// Leaving it unset must not move an existing configuration's identity.
+	for id, n := range c.Workflow.Nodes {
+		if n.Variations != 0 {
+			t.Fatalf("node %s has variations by default", id)
+		}
+	}
+	for _, n := range []int{MinVariations, MaxVariations} {
+		c.Workflow.Nodes["design"] = withVariations(c.Workflow.Nodes["design"], n)
+		if err := c.Validate(); err != nil {
+			t.Fatalf("variations %d refused: %v", n, err)
+		}
+	}
+	for _, n := range []int{1, MaxVariations + 1, -1} {
+		c.Workflow.Nodes["design"] = withVariations(c.Workflow.Nodes["design"], n)
+		if err := c.Validate(); err == nil {
+			t.Fatalf("variations %d accepted", n)
+		}
+	}
+	c.Workflow.Nodes["design"] = withVariations(c.Workflow.Nodes["design"], 0)
+	if Digest(c) != before {
+		t.Fatal("turning variations off did not restore the original digest")
+	}
+}
+
+func withVariations(n Node, count int) Node { n.Variations = count; return n }
+
+func TestRecordingVariationsNeverChangesWhatAnApprovalIsBoundTo(t *testing.T) {
+	// An approval binds to WorkDigest. If recording the supervisor's proposed
+	// alternatives changed it, every approval of a stage with variations would
+	// be silently invalidated.
+	result := Result{Summary: "built it", Commits: map[string]string{"app": strings.Repeat("a", 40)}}
+	bound := result.WorkDigest()
+	result.Review = Review{Accepted: true, Summary: "good", Variations: []Variation{{Name: "a", Rationale: "r"}, {Name: "b", Rationale: "r"}}}
+	if result.WorkDigest() != bound {
+		t.Fatal("recording variations changed the work digest an approval is bound to")
+	}
+}

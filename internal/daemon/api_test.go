@@ -230,3 +230,72 @@ func TestAskingRecordsAQuestionWithoutTouchingTheWork(t *testing.T) {
 		t.Fatal("accepted a question for a stage that has not started")
 	}
 }
+
+func TestOnlySteeringAskingAndChoosingMayAddressAVariation(t *testing.T) {
+	c, store := testAPI(t)
+	r := create(t, c)
+	branched, err := store.Mutate(context.Background(), r.ID, r.Version, "branch", "fixture.branch", nil, func(run *workflow.Run) error {
+		rev := run.Current()
+		rev.State = "active"
+		nodes := rev.Config.Workflow.Nodes
+		design := nodes["design"]
+		design.Variations = 3
+		nodes["design"] = design
+		for _, node := range []string{"task", "plan", "design"} {
+			rev.Checkpoints[node] = workflow.Checkpoint{ID: "cp_" + node, Node: node}
+		}
+		if err := run.Branch(run.CurrentRevision, "design", []workflow.Variation{{Name: "polling", Rationale: "r"}, {Name: "streaming", Rationale: "r"}}, time.Now()); err != nil {
+			return err
+		}
+		// Every candidate has finished its stages, so one can be chosen.
+		for i := range run.Revisions {
+			v := &run.Revisions[i]
+			v.State = "active"
+			for id, n := range v.Config.Workflow.Nodes {
+				if n.Kind != "change" {
+					v.Checkpoints[id] = workflow.Checkpoint{ID: "cp_" + id + v.ID, Node: id}
+				}
+			}
+			v.Attempts = []workflow.Attempt{{ID: "att_" + v.ID, Node: "design", State: "checkpointed"}}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sibling := branched.Revisions[1].ID
+	version := branched.Version
+	act := func(req ActionRequest) (*workflow.Run, error) {
+		req.OperationID, req.ExpectedVersion = workflow.ID("op"), version
+		run, err := c.Action(context.Background(), r.ID, req)
+		if err == nil {
+			version = run.Version
+		}
+		return run, err
+	}
+
+	if _, err := act(ActionRequest{Revision: sibling, Action: "message", Node: "design", Recipient: "worker", Message: "prefer the standard library"}); err != nil {
+		t.Fatalf("could not steer a variation: %v", err)
+	}
+	if _, err := act(ActionRequest{Revision: sibling, Action: "ask", Node: "design", Message: "why polling?"}); err != nil {
+		t.Fatalf("could not ask a variation: %v", err)
+	}
+	// Approval and rewind still require the current revision: a variation
+	// must not be approved or rewound from under the comparison.
+	for _, action := range []string{"approve", "rewind"} {
+		if _, err := act(ActionRequest{Revision: sibling, Action: action, Node: "design", Attempt: "att_" + sibling}); err == nil {
+			t.Fatalf("%s was accepted on a variation that is not current", action)
+		}
+	}
+
+	chosen, err := act(ActionRequest{Revision: sibling, Action: "choose"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chosen.CurrentRevision != sibling || !chosen.Revision(sibling).Variant.Chosen {
+		t.Fatal("choosing did not make the variation current")
+	}
+	if chosen.Revisions[0].State != workflow.NotChosen || chosen.Revisions[2].State != workflow.NotChosen {
+		t.Fatal("the other variations were not retired")
+	}
+}

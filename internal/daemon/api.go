@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"syscall"
 	"time"
@@ -176,13 +177,18 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 		config = &frozen
 	}
 	run, err := s.Store.Mutate(r.Context(), r.PathValue("id"), req.ExpectedVersion, req.OperationID, "run."+req.Action, req, func(run *workflow.Run) error {
-		if req.Revision != run.CurrentRevision {
+		// Actions address the current revision. While variations are compared,
+		// steering, asking and choosing may also address one of them; approval,
+		// rewind and the rest still require the current revision.
+		if req.Revision != run.CurrentRevision && !(slices.Contains([]string{"message", "ask", "choose"}, req.Action) && run.Schedulable(req.Revision)) {
 			return workflow.ErrConflict
 		}
 		now := time.Now().UTC()
 		switch req.Action {
 		case "message":
 			return run.Message(req.Revision, req.Node, req.Recipient, req.Message, now)
+		case "choose":
+			return run.Choose(req.Revision, now)
 		case "ask":
 			_, err := run.Ask(req.Revision, req.Node, req.Message, req.Actor, now)
 			return err

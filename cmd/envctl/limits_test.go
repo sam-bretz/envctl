@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -68,5 +69,32 @@ func TestRunShowReportsEffectiveNodeAgentModels(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "worker model base-worker, supervisor model base-supervisor") {
 		t.Fatalf("expected code to inherit the run-wide model:\n%s", out.String())
+	}
+}
+
+func TestRunShowJSONCarriesTheSupervisorsProposedVariations(t *testing.T) {
+	c, err := workflow.Parse([]byte("version: 2\nproject: demo\nrepositories: [{id: app, url: /source}]\nworkflow: {template: feature}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := workflow.NewRun("demo", "ship it", "dev", c, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Current().Checkpoints["design"] = workflow.Checkpoint{ID: "cp_design", Node: "design", Result: workflow.Result{
+		Review: workflow.Review{Accepted: true, Summary: "sound", Variations: []workflow.Variation{{Name: "polling", Rationale: "no webhooks"}, {Name: "streaming", Rationale: "high volume"}}},
+	}}
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	if err = printRun(cmd, &globals{jsonOut: true}, r); err != nil {
+		t.Fatal(err)
+	}
+	var decoded workflow.Run
+	if err = json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if v := decoded.Current().Checkpoints["design"].Result.Review.Variations; len(v) != 2 || v[0].Name != "polling" {
+		t.Fatalf("variations lost from run show --json: %+v", v)
 	}
 }

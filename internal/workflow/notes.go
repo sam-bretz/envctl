@@ -9,6 +9,7 @@ const (
 	NoteStallNudge    = "stall-nudge"
 	NotePublished     = "published"
 	NotePublishFailed = "publish-failed"
+	NoteChosen        = "variation-chosen"
 )
 
 // Note records a coordinator decision that no other run state keeps. Recovery

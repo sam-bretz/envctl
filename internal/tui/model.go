@@ -94,6 +94,13 @@ type artifactMsg struct {
 	fallback string
 	opened   bool
 }
+
+// variationsMsg carries a side-by-side comparison of a run's variations.
+type variationsMsg struct {
+	key  string
+	text string
+	err  error
+}
 type diffMsg struct {
 	key        string
 	comparison review.Comparison
@@ -193,14 +200,22 @@ func (m Model) act(req daemon.ActionRequest) tea.Cmd {
 	if r == nil {
 		return nil
 	}
-	if m.viewRevision().ID != r.CurrentRevision {
-		return func() tea.Msg {
-			return actionMsg{err: fmt.Errorf("history is read-only; press ] to return to the current revision")}
+	target := r.CurrentRevision
+	if viewed := m.viewRevision(); viewed.ID != r.CurrentRevision {
+		// A variation being compared is not history: it can be steered, asked
+		// and chosen. Everything else about an older revision is read-only.
+		if !viewed.Undecided() || !slices.Contains([]string{"message", "ask", "choose"}, req.Action) {
+			return func() tea.Msg {
+				return actionMsg{err: fmt.Errorf("history is read-only; press ] to return to the current revision")}
+			}
 		}
+		target = viewed.ID
 	}
 	req.OperationID = workflow.ID("op")
 	req.ExpectedVersion = r.Version
-	req.Revision = r.CurrentRevision
+	if req.Revision == "" {
+		req.Revision = target
+	}
 	id := r.ID
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -267,6 +282,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if v.fallback != "" {
 				m.Notice = "Browser unavailable (" + v.fallback + "); showing the terminal preview"
 			}
+		}
+	case variationsMsg:
+		if v.key != m.ArtifactRequest {
+			return m, nil
+		}
+		if v.err != nil {
+			m.Error = v.err.Error()
+		} else {
+			m.ArtifactText, m.Offset, m.Error = v.text, 0, ""
 		}
 	case diffMsg:
 		if v.key != m.DiffRequest || v.key != m.diffKey() {
@@ -345,7 +369,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case "enter":
 				mode, body := m.Mode, strings.TrimSpace(m.Input)
-				if mode != "new" && mode != "new-ref" && (m.current() == nil || m.current().ID != m.InputRun || m.current().CurrentRevision != m.InputRevision || m.nodeID() != m.InputNode) {
+				if mode != "new" && mode != "new-ref" && (m.current() == nil || m.current().ID != m.InputRun || m.viewRevision().ID != m.InputRevision || m.nodeID() != m.InputNode) {
 					m.Mode = ""
 					m.Input = ""
 					m.Error = "The selected run, revision or stage changed; reopen the input before sending."
@@ -358,6 +382,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.Input = ""
 				if mode == "chat" {
 					return m, m.act(daemon.ActionRequest{Action: "message", Node: m.nodeID(), Recipient: m.Recipient, Message: body})
+				}
+				if mode == "choose" {
+					target, err := m.current().FindVariation(body)
+					if err != nil {
+						m.Error = err.Error()
+						return m, nil
+					}
+					return m, m.act(daemon.ActionRequest{Action: "choose", Revision: target.ID})
 				}
 				if mode == "ask" {
 					return m, m.act(daemon.ActionRequest{Action: "ask", Node: m.nodeID(), Message: body, Actor: "local"})
@@ -473,6 +505,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.beginInput("chat")
 		case "?":
 			m.beginInput("ask")
+		case "v":
+			if r := m.current(); r != nil && len(r.VariationGroups()) > 0 {
+				m.clearArtifact()
+				m.ArtifactRequest = m.viewKey()
+				api, run, request := m.API, *workflow.Clone(r), m.ArtifactRequest
+				return m, func() tea.Msg {
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+					compared, err := review.CompareVariations(ctx, api, &run)
+					if err != nil {
+						return variationsMsg{key: request, err: err}
+					}
+					return variationsMsg{key: request, text: review.VariationsText(compared) + "\n\nC to choose one · esc to close"}
+				}
+			}
+		case "C":
+			if r := m.current(); r != nil && undecided(*r) != "" {
+				m.beginInput("choose")
+			}
 		case "n":
 			m.beginInput("new")
 			m.loadWorkflows()
@@ -789,6 +840,10 @@ func (m Model) header(width int) []chrome {
 			text := t.fg(t.warn()).Render(clean("Recovery (" + rev.Recovery.Phase + "): " + rev.Recovery.Detail))
 			rows = append(rows, chrome{text: ansi.Truncate(text, width, "…")})
 		}
+		if group := undecided(*r); group != "" {
+			line := fmt.Sprintf("Comparing %d variations of %s · v to compare · C to choose", len(r.Variations(group)), r.Variations(group)[0].Variant.Node)
+			rows = append(rows, chrome{text: ansi.Truncate(t.fg(t.accent()).Render(line), width, "…")})
+		}
 		// What blocks a run belongs where you look first, not on a tab.
 		for _, line := range headerBlockers(rev, m.nodeID()) {
 			rows = append(rows, chrome{text: ansi.Truncate(t.fg(t.warn()).Render(clean(line)), width, "…")})
@@ -831,6 +886,9 @@ func (m Model) footer(width int, compact bool) []string {
 		}
 		if m.Mode == "chat" {
 			label = "steer " + m.Recipient + " · changes the work · tab to ask instead"
+		}
+		if m.Mode == "choose" {
+			label = "choose a variation to continue to approval · the others are retired and never published"
 		}
 		if m.Mode == "ask" {
 			label = "ask " + m.nodeID() + "'s supervisor · does not change the work · tab to steer instead"

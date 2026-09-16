@@ -70,25 +70,11 @@ func (r *Run) CountedTokens() int64 {
 // Usage sums agent usage across every revision: finished attempts, live
 // progress of running ones, and readiness probes.
 func (r *Run) Usage() Usage {
+	// One sum, defined per revision, so a run's total and the per-variation
+	// figures a comparison shows can never disagree.
 	var total Usage
 	for i := range r.Revisions {
-		v := &r.Revisions[i]
-		for _, u := range v.ProbeUsage {
-			total = total.Add(u)
-		}
-		for _, q := range v.Questions {
-			if q.Usage != nil {
-				total = total.Add(*q.Usage)
-			}
-		}
-		for _, a := range v.Attempts {
-			switch {
-			case a.Usage != nil:
-				total = total.Add(*a.Usage)
-			case a.Progress != nil && a.Progress.Usage != nil:
-				total = total.Add(*a.Progress.Usage)
-			}
-		}
+		total = total.Add(r.Revisions[i].Usage())
 	}
 	return total
 }

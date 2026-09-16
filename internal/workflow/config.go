@@ -150,7 +150,20 @@ type Node struct {
 	Join         *JoinPolicy    `yaml:"join,omitempty" json:"join,omitempty"`
 	Limits       NodeLimits     `yaml:"limits,omitempty" json:"limits,omitzero"`
 	Agents       NodeAgents     `yaml:"agents,omitempty" json:"agents,omitzero"`
+	// Variations lets this node's supervisor propose up to this many
+	// alternative approaches alongside accepting the work, so a choice between
+	// credible designs is recorded rather than made silently by one agent.
+	// Zero, the default, turns it off and keeps existing digests unchanged.
+	Variations int `yaml:"variations,omitempty" json:"variations,omitempty"`
 }
+
+// Supervisors can propose between MinVariations and MaxVariations
+// alternatives. Fewer than two is not a choice; more than three multiplies
+// agent usage past what a run's token ceiling is sized for.
+const (
+	MinVariations = 2
+	MaxVariations = 3
+)
 
 // NodeLimits overrides the revision-wide attempt budget for one node. Zero
 // fields inherit Config.Limits; omitted overrides keep existing digests.
@@ -533,6 +546,9 @@ func (d Definition) Validate() error {
 		}
 		if len(n.Outputs) == 0 {
 			return fmt.Errorf("node %s needs required output artifacts", id)
+		}
+		if n.Variations != 0 && (n.Variations < MinVariations || n.Variations > MaxVariations) {
+			return fmt.Errorf("node %s: variations must be 0 to turn it off, or from %d to %d", id, MinVariations, MaxVariations)
 		}
 		if n.Limits.MaxAttempts < 0 || n.Limits.MaxAttempts > MaxNodeAttempts || n.Limits.AttemptSeconds < 0 || n.Limits.AttemptSeconds > MaxNodeAttemptSeconds {
 			return fmt.Errorf("node %s: limits must be positive, with at most %d attempts and %d attempt seconds", id, MaxNodeAttempts, MaxNodeAttemptSeconds)

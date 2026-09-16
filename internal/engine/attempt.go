@@ -201,6 +201,9 @@ func (e *Engine) reconcileAttempt(ctx context.Context, run *workflow.Run, rev *w
 				if current == nil || current.State != "verifying" || current.Result == nil {
 					return workflow.ErrConflict
 				}
+				if v.Undecided() {
+					return errors.New("a variation cannot publish before one is chosen")
+				}
 				// Require a matching approval before any external publication.
 				if v.Config.Workflow.Nodes[current.Node].Gate == "human" && (current.Approval == nil || current.Approval.ResultDigest != current.Result.WorkDigest()) {
 					return errors.New("publication has no matching human approval")
@@ -234,15 +237,31 @@ func (e *Engine) reconcileAttempt(ctx context.Context, run *workflow.Run, rev *w
 			if v.State != "active" {
 				return workflow.ErrConflict
 			}
-			if _, err := v.Accept(a.ID, e.now()); err != nil {
+			cp, err := v.Accept(a.ID, e.now())
+			if err != nil {
 				return err
 			}
 			run.AppendTrackerLog(v.Config.Tracker, workflow.TrackerKindStageCompleted, v.ID, a.Node, a.ID, "", e.now())
+			// Proposals become variations in the mutation that accepts the
+			// stage, so they branch exactly once. Branch appends revisions, so
+			// nothing may use v after it.
+			if shouldBranch(run, v, a.Node, cp) {
+				return run.Branch(v.ID, a.Node, cp.Result.Review.Variations, e.now())
+			}
 			return nil
 		})
 		return true, err
 	}
 	return false, nil
+}
+
+// shouldBranch reports whether an accepted stage's proposals should become
+// variations: the stage opted in, the supervisor proposed enough of them, and
+// this revision is not already a variation.
+func shouldBranch(run *workflow.Run, v *workflow.Revision, node string, cp workflow.Checkpoint) bool {
+	return v.Config.Workflow.Nodes[node].Variations >= workflow.MinVariations &&
+		len(cp.Result.Review.Variations) >= workflow.MinVariations &&
+		v.Variant == nil && run.CurrentRevision == v.ID
 }
 
 // prLinks lists pull requests in a stable order, one repository each.

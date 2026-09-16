@@ -22,50 +22,57 @@ func panel(t *testing.T, m Model, name string) Model {
 }
 
 func TestTheTabsAreCutDownToWhatHelpsReviewTheWork(t *testing.T) {
-	want := []string{"Chat", "Checkpoint", "Changes", "Tests", "Decision Log"}
+	want := []string{"Chat", "Changes", "Tests", "Decision Log"}
 	if !slices.Equal(panels, want) {
 		t.Fatalf("tabs: %v, want %v", panels, want)
 	}
 }
 
-func TestRemovingTheReadinessTabDidNotHideWhatBlocksARun(t *testing.T) {
-	// This was on Readiness, two keypresses from where you land. A run that
-	// cannot proceed has to say so on the first screen.
-	m := panel(t, modelFixture(t), "Chat")
-	m.Width, m.Height = 120, 40
-	if !strings.Contains(m.View().Content, "harness.worker: not probed") {
-		t.Fatalf("a readiness problem is not visible on Chat:\n%s", m.View().Content)
-	}
-	rev := m.Runs[0].Current()
-	rev.Recovery = &workflow.Recovery{Phase: "publication", Detail: "GitHub rejected the push"}
-	if !strings.Contains(m.details(), "GitHub rejected the push") {
-		t.Fatalf("recovery is not visible on Chat:\n%s", m.details())
+func TestWhatBlocksARunIsInTheRunSummaryWhateverTabIsOpen(t *testing.T) {
+	// Readiness and recovery used to be on a tab of their own, two keypresses
+	// from where you land. They belong in the summary, visible from any tab.
+	for _, name := range panels {
+		m := panel(t, modelFixture(t), name)
+		m.Width, m.Height = 120, 40
+		rev := m.Runs[0].Current()
+		rev.Recovery = &workflow.Recovery{Phase: "publication", Detail: "GitHub rejected the push"}
+		view := m.View().Content
+		if !strings.Contains(view, "harness.worker: not probed") || !strings.Contains(view, "GitHub rejected the push") {
+			t.Fatalf("a blocker is hidden on the %s tab:\n%s", name, view)
+		}
 	}
 }
 
-func TestOnlyUnhealthyServicesSurfaceNowTheServicesTabIsGone(t *testing.T) {
-	m := panel(t, modelFixture(t), "Chat")
+func TestServiceStatesShowWhenThereIsAReasonToLook(t *testing.T) {
+	m := modelFixture(t)
 	m.Width, m.Height = 120, 40
 	rev := m.Runs[0].Current()
 	rev.Runtime = workflow.RuntimeState{ID: "vm", State: "running", Ready: true, PreviewURL: "http://127.0.0.1:41234/", Services: []workflow.Service{
 		{Name: "web", State: "running/healthy"}, {Name: "db", State: "exited"},
 	}}
-	details := m.details()
-	if !strings.Contains(details, "db is exited") {
-		t.Fatalf("a down service is hidden:\n%s", details)
+	// A service that is down is shown, because it is often why a stage failed.
+	view := m.View().Content
+	if !strings.Contains(view, "db exited") {
+		t.Fatalf("a down service is hidden:\n%s", view)
 	}
-	if strings.Contains(details, "web is") {
-		t.Fatalf("a healthy service is listed as a problem:\n%s", details)
-	}
-	// The preview URL was the Services tab's other job; the header keeps it.
-	if !strings.Contains(m.View().Content, "Preview: http://127.0.0.1:41234/") {
+	if !strings.Contains(view, "Preview: http://127.0.0.1:41234/") {
 		t.Fatal("the preview URL is no longer shown anywhere")
+	}
+	// All healthy and no preview configured: nothing worth a line.
+	rev.Runtime.Services[1].State = "running/healthy"
+	if view = m.View().Content; strings.Contains(view, "web running/healthy") {
+		t.Fatalf("healthy services shown with no preview to look at:\n%s", view)
+	}
+	// With a preview configured, the services are what you came to look at.
+	rev.Config.Preview = &workflow.Preview{Service: "web", Port: 8080}
+	if view = m.View().Content; !strings.Contains(view, "web running/healthy") {
+		t.Fatalf("services hidden although a preview is configured:\n%s", view)
 	}
 }
 
-func TestACheckpointSaysWhichStagesItRunsAfter(t *testing.T) {
+func TestChatSaysWhichStagesTheSelectedStageRunsAfter(t *testing.T) {
 	// Graph was removed; a stage's dependencies are the part worth keeping.
-	m := panel(t, modelFixture(t), "Checkpoint")
+	m := panel(t, modelFixture(t), "Chat")
 	m.Node = slices.Index(orderOf(m), "plan")
 	if !strings.Contains(m.details(), "Runs after: task") {
 		t.Fatalf("dependencies not shown:\n%s", m.details())
@@ -167,5 +174,42 @@ func TestADecisionLogSaysWhatARewindRerunAndWhatChanged(t *testing.T) {
 	}
 	if got := log(r); !strings.Contains(got, "you: rewound, rerunning from task, changing the objective") {
 		t.Fatalf("objective change not explained:\n%s", got)
+	}
+}
+
+func TestTheDecisionLogIncludesQuestionsAndTheCoordinatorsStops(t *testing.T) {
+	m := modelFixture(t)
+	r := &m.Runs[0]
+	rev := r.Current()
+	base := rev.CreatedAt
+	at := func(min int) time.Time { return base.Add(time.Duration(min) * time.Minute) }
+	rev.Questions = []workflow.Question{
+		{ID: "q1", Node: "code", Asker: "local", Text: "is there a PR open?", State: workflow.QuestionAnswered, Answer: "not yet", CreatedAt: at(1)},
+		{ID: "q2", Node: "code", Text: "why?", State: workflow.QuestionFailed, Detail: "VM released", CreatedAt: at(2)},
+	}
+	rev.Notes = []workflow.Note{
+		{At: at(3), Kind: workflow.NoteStallNudge, Node: "code", Detail: "nudged the worker after a silence (nudge 1 of 2)"},
+		{At: at(4), Kind: workflow.NoteAttemptBudget, Node: "qa", Detail: "stage qa exhausted its configured 3 attempts"},
+		{At: at(5), Kind: workflow.NoteTokenCeiling, Detail: "run counted 20.0M of its 20.0M token ceiling"},
+		{At: at(6), Kind: workflow.NotePublishFailed, Detail: "base branch main moved"},
+		{At: at(7), Kind: workflow.NotePublished, Node: "approved-change", Detail: "app: https://github.com/o/r/pull/7"},
+	}
+	joined := ""
+	for _, d := range decisions(r) {
+		joined += d.Stage + " | " + d.Actor + ": " + d.Reason + "\n"
+	}
+	for _, want := range []string{
+		"code | you: asked the supervisor: is there a PR open? [answered: not yet]",
+		// A question with no recorded asker, as from MCP, is still yours.
+		"code | you: asked the supervisor: why? [not answered: VM released]",
+		"code | coordinator: nudged the worker after a silence (nudge 1 of 2)",
+		"qa | coordinator: stopped retrying: stage qa exhausted its configured 3 attempts",
+		"| coordinator: stopped at the token ceiling: run counted 20.0M of its 20.0M token ceiling",
+		"| coordinator: could not publish: base branch main moved",
+		"approved-change | coordinator: opened the pull request: app: https://github.com/o/r/pull/7",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing %q in:\n%s", want, joined)
+		}
 	}
 }

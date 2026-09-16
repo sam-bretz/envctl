@@ -66,6 +66,15 @@ Neither harness accepts input mid-run, so live delivery interrupts and resumes. 
 
 Worker-directed messages reach the running worker. The supervisor's prompt includes every message for its stage, with an instruction to reject work that ignores steering addressed to the worker. Messages that arrive while the supervisor is reviewing interrupt and resume the supervisor the same way. Each role allows 8 live resumes per attempt. After that, progress reports the limit, and further messages reach the supervisor review or the next attempt. Messages that arrive after an attempt's review has finished apply to that stage's next attempt, or to a rewind.
 
+
+### Asking a stage's supervisor
+
+```bash
+envctl run ask <run> --node <stage> --text "<question>"   # waits and prints the answer
+envctl run ask <run> --node <stage> --text "<question>" --wait=false
+```
+
+`run ask` puts a question to the stage's supervisor and, by default, waits up to 12 minutes (`--timeout`) for the answer. Unlike `run message`, it never steers: the answer comes from a separate read-only invocation that can read the stage's worktree but cannot edit it or run commands, so the attempt's result, review, digest and approval are unchanged, and a running worker is not interrupted. Claude answers from a branch of the supervisor's session (`--fork-session`), leaving the original transcript as it was; Codex starts a fresh read-only session from the stage's facts. A question needs the stage to have started and the run's VM to still be running, and a run at its token ceiling refuses it; answers count toward that ceiling. `run show` lists questions and answers, and MCP clients ask with `envctl_action` action `ask` and read answers from `envctl_run`.
 ## Pull requests
 
 ```bash

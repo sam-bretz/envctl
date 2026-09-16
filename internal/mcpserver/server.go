@@ -65,7 +65,7 @@ type actionInput struct {
 	OperationID     string              `json:"operation_id" jsonschema:"Stable caller-generated ID; reuse with identical arguments on reconnect"`
 	ExpectedVersion int64               `json:"expected_version" jsonschema:"Observed run version; stale mutations are rejected"`
 	Revision        string              `json:"revision" jsonschema:"Observed current revision; never silently updated by the server"`
-	Action          string              `json:"action" jsonschema:"One of message, rewind, cancel, priority, plugin-attach, plugin-remove"`
+	Action          string              `json:"action" jsonschema:"One of message, ask, rewind, cancel, priority, plugin-attach, plugin-remove. ask puts message to node's supervisor as a question; it never changes the work, and the answer appears on the run's current revision under questions"`
 	Node            string              `json:"node,omitempty"`
 	Task            string              `json:"task,omitempty"`
 	Recipient       string              `json:"recipient,omitempty"`
@@ -170,11 +170,11 @@ func New(api API, options Options) *mcp.Server {
 			return nil, map[string]any{"run": r}, err
 		})
 	}
-	mcp.AddTool(server, tool("envctl_action", "Send a message, rewind, cancel, change priority, or amend invocation plugins. Requires exact observed version/revision and a stable operation_id. Rewind/plugin changes create revisions. Human approval and publication are not agent tools.", false), func(ctx context.Context, _ *mcp.CallToolRequest, in actionInput) (*mcp.CallToolResult, any, error) {
+	mcp.AddTool(server, tool("envctl_action", "Send a message, ask a stage's supervisor a question, rewind, cancel, change priority, or amend invocation plugins. Requires exact observed version/revision and a stable operation_id. Rewind/plugin changes create revisions. Human approval and publication are not agent tools.", false), func(ctx context.Context, _ *mcp.CallToolRequest, in actionInput) (*mcp.CallToolResult, any, error) {
 		if err := scope(in.Run); err != nil {
 			return nil, nil, err
 		}
-		if !slices.Contains([]string{"message", "rewind", "cancel", "priority", "plugin-attach", "plugin-remove"}, in.Action) {
+		if !slices.Contains([]string{"message", "ask", "rewind", "cancel", "priority", "plugin-attach", "plugin-remove"}, in.Action) {
 			return nil, nil, errors.New("unsupported agent action; human approval and checkpoint publication are separate operations")
 		}
 		if in.OperationID == "" || in.ExpectedVersion < 1 || in.Revision == "" {

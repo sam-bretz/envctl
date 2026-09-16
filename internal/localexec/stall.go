@@ -10,6 +10,7 @@ import (
 	"github.com/sam-bretz/envctl/internal/agent"
 	"github.com/sam-bretz/envctl/internal/engine"
 	"github.com/sam-bretz/envctl/internal/guestjob"
+	"github.com/sam-bretz/envctl/internal/workflow"
 )
 
 // MaxStallNudges bounds coordinator nudges per agent role in one attempt. A
@@ -24,7 +25,10 @@ type stallState struct {
 	Since    time.Time `json:"since"`              // its last output, or when it was first observed
 	Extended bool      `json:"extended,omitempty"` // window extended once for a command in flight
 	Nudges   []int     `json:"nudges,omitempty"`   // live generations started by stall nudges
-	Failing  string    `json:"failing,omitempty"`  // evidence; the stalled job is being stopped
+	// NudgedAt is when each nudge was sent, parallel to Nudges, so the
+	// Decision Log can say when the coordinator stepped in.
+	NudgedAt []time.Time `json:"nudged_at,omitempty"`
+	Failing  string      `json:"failing,omitempty"` // evidence; the stalled job is being stopped
 }
 
 func (b *Backend) now() time.Time {
@@ -104,6 +108,7 @@ func (b *Backend) watchStall(a engine.Assignment, r *attemptRecord, role, logs s
 		s.Failing = fmt.Sprintf("%s; live resume limit (%d) reached", evidence, MaxLiveSteering)
 	default:
 		s.Nudges = append(s.Nudges, r.advance(a, role, nudgePrompt(role, idle)))
+		s.NudgedAt = append(s.NudgedAt, now)
 		return true, b.save(a, r)
 	}
 	s.Failing = string(clean(a, []byte(s.Failing)))
@@ -179,4 +184,20 @@ func short(d time.Duration) string {
 		s = strings.TrimSuffix(s, "0m")
 	}
 	return s
+}
+
+// notes reports the stall nudges this attempt has sent, for the run to keep.
+func (r *attemptRecord) notes(a engine.Assignment) []workflow.Note {
+	var out []workflow.Note
+	for _, role := range []string{"worker", "supervisor"} {
+		s := r.Stall[role]
+		if s == nil {
+			continue
+		}
+		for i, at := range s.NudgedAt {
+			out = append(out, workflow.Note{At: at, Kind: workflow.NoteStallNudge, Node: a.Attempt.Node,
+				Detail: fmt.Sprintf("nudged the %s after a silence (nudge %d of %d)", role, i+1, MaxStallNudges)})
+		}
+	}
+	return out
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/sam-bretz/envctl/internal/workflow"
@@ -131,6 +133,21 @@ func (e *Engine) reconcileAttempt(ctx context.Context, run *workflow.Run, rev *w
 			})
 			return true, err
 		}
+		if fresh := newNotes(rev, observation.Notes); len(fresh) > 0 {
+			_, err = e.update(ctx, id, revision, "revision.notes", func(_ *workflow.Run, v *workflow.Revision) error {
+				added := false
+				for _, n := range fresh {
+					added = v.AddNote(n) || added
+				}
+				if !added {
+					return workflow.ErrConflict
+				}
+				return nil
+			})
+			if err != nil && !errors.Is(err, workflow.ErrConflict) {
+				return true, err
+			}
+		}
 		if observation.Session != "" && a.Session != observation.Session {
 			_, err = e.update(ctx, id, revision, "attempt.session", func(_ *workflow.Run, v *workflow.Revision) error {
 				current := v.Attempt(a.ID)
@@ -201,6 +218,7 @@ func (e *Engine) reconcileAttempt(ctx context.Context, run *workflow.Run, rev *w
 				// logged as its own entry rather than buried in the stage's.
 				if len(prs) > 0 {
 					r.AppendTrackerLog(v.Config.Tracker, workflow.TrackerKindPublished, v.ID, current.Node, current.ID, "", e.now())
+					v.AddNote(workflow.Note{At: e.now(), Kind: workflow.NotePublished, Node: current.Node, Detail: prLinks(prs)})
 				}
 				return nil
 			})
@@ -225,4 +243,31 @@ func (e *Engine) reconcileAttempt(ctx context.Context, run *workflow.Run, rev *w
 		return true, err
 	}
 	return false, nil
+}
+
+// prLinks lists pull requests in a stable order, one repository each.
+func prLinks(prs map[string]string) string {
+	keys := make([]string, 0, len(prs))
+	for k := range prs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	links := make([]string, 0, len(keys))
+	for _, k := range keys {
+		links = append(links, k+": "+prs[k])
+	}
+	return strings.Join(links, ", ")
+}
+
+// newNotes filters reported notes down to those the revision has not kept,
+// so a note reported on every poll causes one write.
+func newNotes(rev *workflow.Revision, reported []workflow.Note) []workflow.Note {
+	var fresh []workflow.Note
+	for _, n := range reported {
+		probe := workflow.Revision{Notes: rev.Notes}
+		if probe.AddNote(n) {
+			fresh = append(fresh, n)
+		}
+	}
+	return fresh
 }

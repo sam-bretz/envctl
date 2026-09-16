@@ -183,6 +183,9 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 		switch req.Action {
 		case "message":
 			return run.Message(req.Revision, req.Node, req.Recipient, req.Message, now)
+		case "ask":
+			_, err := run.Ask(req.Revision, req.Node, req.Message, req.Actor, now)
+			return err
 		case "priority":
 			run.Priority = req.Priority
 			return nil

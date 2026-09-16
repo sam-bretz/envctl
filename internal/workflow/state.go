@@ -116,24 +116,31 @@ func (r *Run) TrackerLogCounts() (pending, failed int) {
 }
 
 type Revision struct {
-	ID                     string                   `json:"id"`
-	Parent                 string                   `json:"parent,omitempty"`
-	FromCheckpoint         string                   `json:"from_checkpoint,omitempty"`
-	Objective              string                   `json:"objective"`
-	Config                 Config                   `json:"config"`
-	State                  string                   `json:"state"`
-	Runtime                RuntimeState             `json:"runtime"`
-	ChildRuntimes          map[string]*ChildRuntime `json:"child_runtimes,omitempty"`
-	Readiness              []Probe                  `json:"readiness"`
-	Attempts               []Attempt                `json:"attempts"`
-	Checkpoints            map[string]Checkpoint    `json:"checkpoints"`
-	Messages               []Message                `json:"messages"`
-	CreatedAt              time.Time                `json:"created_at"`
-	Recovery               *Recovery                `json:"recovery,omitempty"`
-	SourcePins             map[string]string        `json:"source_pins,omitempty"`
-	ReadinessCheckedAt     time.Time                `json:"readiness_checked_at,omitempty"`
-	DrainNodes             []string                 `json:"drain_nodes,omitempty"`
-	DiscoveredRequirements []Requirement            `json:"discovered_requirements,omitempty"`
+	ID             string                   `json:"id"`
+	Parent         string                   `json:"parent,omitempty"`
+	FromCheckpoint string                   `json:"from_checkpoint,omitempty"`
+	Objective      string                   `json:"objective"`
+	Config         Config                   `json:"config"`
+	State          string                   `json:"state"`
+	Runtime        RuntimeState             `json:"runtime"`
+	ChildRuntimes  map[string]*ChildRuntime `json:"child_runtimes,omitempty"`
+	Readiness      []Probe                  `json:"readiness"`
+	Attempts       []Attempt                `json:"attempts"`
+	Checkpoints    map[string]Checkpoint    `json:"checkpoints"`
+	Messages       []Message                `json:"messages"`
+	// Questions are asked of a stage's supervisor. Unlike Messages they never
+	// steer the work: answering one cannot change an attempt's result,
+	// review, digest or approval.
+	Questions []Question `json:"questions,omitempty"`
+	// Notes are coordinator decisions no other field keeps: ceiling stops,
+	// stall nudges and publication results.
+	Notes                  []Note            `json:"notes,omitempty"`
+	CreatedAt              time.Time         `json:"created_at"`
+	Recovery               *Recovery         `json:"recovery,omitempty"`
+	SourcePins             map[string]string `json:"source_pins,omitempty"`
+	ReadinessCheckedAt     time.Time         `json:"readiness_checked_at,omitempty"`
+	DrainNodes             []string          `json:"drain_nodes,omitempty"`
+	DiscoveredRequirements []Requirement     `json:"discovered_requirements,omitempty"`
 	// ProbeUsage is cumulative usage of real harness readiness probes, by role.
 	ProbeUsage map[string]Usage `json:"probe_usage,omitempty"`
 }

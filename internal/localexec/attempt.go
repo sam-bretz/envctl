@@ -446,7 +446,7 @@ func (b *Backend) failed(a engine.Assignment, r *attemptRecord, detail string) (
 	if err := b.save(a, r); err != nil {
 		return engine.Observation{}, err
 	}
-	return engine.Observation{State: "failed", Detail: detail, Session: r.Session, Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
+	return engine.Observation{State: "failed", Detail: detail, Session: r.Session, Notes: r.notes(a), Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
 }
 
 func (b *Backend) workerFailed(ctx context.Context, a engine.Assignment, r *attemptRecord, detail string) (engine.Observation, error) {
@@ -524,7 +524,7 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 		return engine.Observation{}, err
 	}
 	running := func() (engine.Observation, error) {
-		return engine.Observation{State: "running", Session: r.Session, Progress: b.progress(a, r), Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
+		return engine.Observation{State: "running", Session: r.Session, Notes: r.notes(a), Progress: b.progress(a, r), Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
 	}
 	// agentJob reconciles one role's active generation: it finishes stopping a
 	// superseded generation, starts a missing job, records delivery once the
@@ -822,11 +822,11 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 		if err = b.save(a, r); err != nil {
 			return engine.Observation{}, err
 		}
-		return engine.Observation{State: "completed", Result: &r.Result, Session: r.Session, Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
+		return engine.Observation{State: "completed", Result: &r.Result, Session: r.Session, Notes: r.notes(a), Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
 	case "completed":
-		return engine.Observation{State: "completed", Result: &r.Result, Session: r.Session, Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
+		return engine.Observation{State: "completed", Result: &r.Result, Session: r.Session, Notes: r.notes(a), Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
 	case "failed":
-		return engine.Observation{State: "failed", Detail: r.Detail, Session: r.Session, Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
+		return engine.Observation{State: "failed", Detail: r.Detail, Session: r.Session, Notes: r.notes(a), Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
 	default:
 		return engine.Observation{}, errors.New("unknown durable attempt phase")
 	}

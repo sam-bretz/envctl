@@ -204,3 +204,29 @@ func TestServeSingleOwnerAndRestart(t *testing.T) {
 		t.Fatal("coordinator failed to stop")
 	}
 }
+
+func TestAskingRecordsAQuestionWithoutTouchingTheWork(t *testing.T) {
+	c, store := testAPI(t)
+	r := create(t, c)
+	updated, err := store.Mutate(context.Background(), r.ID, r.Version, "start", "fixture.attempt", nil, func(run *workflow.Run) error {
+		run.Current().Attempts = []workflow.Attempt{{ID: "attempt_1", Node: "code", Number: 1, State: "running"}}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	asked, err := c.Action(context.Background(), r.ID, ActionRequest{OperationID: "ask-1", ExpectedVersion: updated.Version, Revision: updated.CurrentRevision, Action: "ask", Node: "code", Message: "is there a PR open for this?", Actor: "sam"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	qs := asked.Current().Questions
+	if len(qs) != 1 || qs[0].Attempt != "attempt_1" || qs[0].Asker != "sam" || qs[0].State != workflow.QuestionPending {
+		t.Fatalf("question not recorded: %+v", qs)
+	}
+	if asked.Current().Attempts[0].State != "running" || len(asked.Current().Messages) != 0 {
+		t.Fatal("asking steered or changed the running attempt")
+	}
+	if _, err = c.Action(context.Background(), r.ID, ActionRequest{OperationID: "ask-2", ExpectedVersion: asked.Version, Revision: asked.CurrentRevision, Action: "ask", Node: "qa", Message: "why?"}); err == nil {
+		t.Fatal("accepted a question for a stage that has not started")
+	}
+}

@@ -113,6 +113,24 @@ func ParseAssessment(raw []byte) (Assessment, error) {
 	return result, err
 }
 
+// AnswerSchema is the contract for answering a person's question.
+func AnswerSchema() map[string]any {
+	return map[string]any{"type": "object", "additionalProperties": false, "required": []string{"answer"}, "properties": map[string]any{
+		"answer": map[string]any{"type": "string", "minLength": 1},
+	}}
+}
+
+// ParseAnswer reads an answer to a question.
+func ParseAnswer(raw []byte) (string, error) {
+	var out struct {
+		Answer string `json:"answer"`
+	}
+	if err := decodeContract(raw, AnswerSchema(), &out); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out.Answer), nil
+}
+
 // StrictSchema returns schema with every object property required, for
 // harnesses whose structured output mode requires that. Existing required
 // entries keep their order, so an already-strict schema is unchanged.

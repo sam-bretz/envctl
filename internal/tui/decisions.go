@@ -35,6 +35,10 @@ func decisions(r *workflow.Run) []decision {
 		} else if parent := r.Revision(rev.Parent); parent != nil {
 			out = append(out, decision{At: rev.CreatedAt, Stage: rewoundTo(rev), Actor: "you", Reason: rewindReason(parent, rev)})
 		}
+		// Plan's accepted result is where the scope of the work was decided.
+		if cp, ok := rev.Checkpoints[plan]; ok && cp.Result.Summary != "" && rev.Attempt(cp.Attempt) != nil {
+			out = append(out, decision{At: cp.CreatedAt, Stage: plan, Actor: "worker", Reason: "scoped the work: " + firstLine(cp.Result.Summary)})
+		}
 		for _, req := range rev.DiscoveredRequirements {
 			out = append(out, decision{
 				At: planTime(rev, plan), Stage: plan, Actor: "worker",
@@ -66,13 +70,23 @@ func decisions(r *workflow.Run) []decision {
 			out = append(out, decision{At: msg.CreatedAt, Stage: stage, Actor: "you",
 				Reason: fmt.Sprintf("told the %s: %s [%s]", msg.Recipient, firstLine(msg.Body), rev.MessageStatus(msg))})
 		}
-	}
-	// The captain's log already records past needs-attention causes with their
-	// time, which a revision's current Recovery cannot: it only holds the
-	// latest one. It exists only when a tracker is configured.
-	for _, entry := range r.TrackerLog {
-		if entry.Kind == workflow.TrackerKindNeedsAttention {
-			out = append(out, decision{At: entry.Occurred, Stage: entry.Node, Actor: "coordinator", Reason: "needed attention: " + firstLine(entry.Detail)})
+		for _, q := range rev.Questions {
+			outcome := "waiting for an answer"
+			switch q.State {
+			case workflow.QuestionAnswered:
+				outcome = "answered: " + firstLine(q.Answer)
+			case workflow.QuestionFailed:
+				outcome = "not answered: " + firstLine(q.Detail)
+			}
+			out = append(out, decision{At: q.CreatedAt, Stage: q.Node, Actor: approver(q.Asker),
+				Reason: fmt.Sprintf("asked the supervisor: %s [%s]", firstLine(q.Text), outcome)})
+		}
+		// Notes are the decisions no other state keeps: ceiling stops, stall
+		// nudges and what publishing did. They replace reading needs-attention
+		// causes back from the captain's log, which exists only when a tracker
+		// is configured.
+		for _, n := range rev.Notes {
+			out = append(out, decision{At: n.At, Stage: n.Node, Actor: "coordinator", Reason: noteReason(n)})
 		}
 	}
 	slices.SortStableFunc(out, func(a, b decision) int { return a.At.Compare(b.At) })
@@ -82,6 +96,22 @@ func decisions(r *workflow.Run) []decision {
 		out = append(out, decision{Actor: "coordinator", Reason: fmt.Sprintf("needs attention now (%s): %s", cur.Recovery.Phase, firstLine(cur.Recovery.Detail))})
 	}
 	return out
+}
+
+func noteReason(n workflow.Note) string {
+	switch n.Kind {
+	case workflow.NoteTokenCeiling:
+		return "stopped at the token ceiling: " + firstLine(n.Detail)
+	case workflow.NoteAttemptBudget:
+		return "stopped retrying: " + firstLine(n.Detail)
+	case workflow.NoteStallNudge:
+		return firstLine(n.Detail)
+	case workflow.NotePublished:
+		return "opened the pull request: " + firstLine(n.Detail)
+	case workflow.NotePublishFailed:
+		return "could not publish: " + firstLine(n.Detail)
+	}
+	return firstLine(n.Detail)
 }
 
 // rewoundTo is the first stage the new revision has to run again: the one it
@@ -167,37 +197,40 @@ func (m Model) decisionLog() string {
 	return strings.Join(lines, "\n")
 }
 
-// blocking lists what is stopping a run right now: the readiness problems
-// Plan must resolve and any recovery in progress, for the revision and for the
-// selected stage's branch runtime. These used to live on the Readiness tab,
-// where they sat behind two keypresses on the one screen that matters when a
-// run is stuck, so Chat now leads with them. It is empty when nothing blocks.
-func blocking(rev *workflow.Revision, node string) []string {
+// headerBlockers lists what is stopping a run right now that the run summary
+// does not already show: the readiness problems Plan must resolve, and
+// recovery on the selected stage's branch runtime. Revision recovery already
+// has its own summary line. One line each, so a small terminal keeps room for
+// the stage.
+func headerBlockers(rev *workflow.Revision, node string) []string {
 	var out []string
-	// One line each: on a small terminal a full list pushed the stage's own
-	// content off the screen, which is worse than a truncated alert.
 	if problems := rev.ReadinessProblems(time.Now(), rev.Requirements()); len(problems) > 0 {
 		out = append(out, fmt.Sprintf("⚠ Plan must resolve %s: %s", plural(len(problems), "readiness problem"), strings.Join(problems, "; ")))
-	}
-	if rev.Recovery != nil {
-		out = append(out, recoveryLine("⚠ Needs attention", rev.Recovery))
 	}
 	if child := rev.ChildRuntimes[node]; child != nil && child.Recovery != nil {
 		out = append(out, recoveryLine("⚠ "+node+"'s branch runtime needs attention", child.Recovery))
 	}
-	// The Services tab listed every service. Healthy ones are noise while
-	// following a run, but one that is down is often why a stage failed, so
-	// only those are kept.
-	var down []string
+	return out
+}
+
+// serviceLine shows service states when there is a reason to: a preview is
+// configured, so the services are what you came to look at, or one is down,
+// which is often why a stage failed. Otherwise healthy services are noise.
+func serviceLine(rev *workflow.Revision) string {
+	var all, down []string
 	for _, svc := range rev.Runtime.Services {
+		all = append(all, svc.Name+" "+svc.State)
 		if !healthy(svc.State) {
-			down = append(down, fmt.Sprintf("%s is %s", svc.Name, svc.State))
+			down = append(down, svc.Name+" "+svc.State)
 		}
 	}
-	if len(down) > 0 {
-		out = append(out, "⚠ Services not healthy in the VM: "+strings.Join(down, "; "))
+	switch {
+	case len(down) > 0:
+		return "⚠ Services not healthy: " + strings.Join(down, " · ")
+	case rev.Config.Preview != nil && len(all) > 0:
+		return "Services: " + strings.Join(all, " · ")
 	}
-	return out
+	return ""
 }
 
 // healthy reads a Compose service state such as "running/healthy",

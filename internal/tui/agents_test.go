@@ -44,7 +44,7 @@ func TestConversationModelLineCoexistsWithAttemptDetail(t *testing.T) {
 	rev.Config.Workflow.Nodes[node] = nodeCfg
 	rev.Attempts = []workflow.Attempt{{ID: "attempt_one", Node: node, Number: 1, State: "running"}}
 	view := m.View().Content
-	if !strings.Contains(view, "Worker model: fixture-worker-model") || !strings.Contains(view, "Worker attempt 1: running") {
+	if !strings.Contains(view, "Worker model: fixture-worker-model") || !strings.Contains(view, "attempt 1 started") {
 		t.Fatalf("conversation lost either the model line or the attempt detail:\n%s", view)
 	}
 }

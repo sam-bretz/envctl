@@ -111,8 +111,9 @@ The dashboard shows the stage strip, your in-flight runs, and a focused panel:
 | --- | --- |
 | `↑` `↓` | Move between runs |
 | `←` `→` | Move between stages |
-| `tab` | Cycle panels: Chat, Checkpoint, Changes, Tests, Decision Log |
-| `i` | Steer the agent (this changes the work); `s` switches between worker and supervisor |
+| `tab` | Cycle panels: Chat, Changes, Tests, Decision Log |
+| `i` | Steer the agent, which changes the work; `s` switches between worker and supervisor |
+| `?` | Ask the stage's supervisor a question, which does not; `tab` in the composer switches between the two |
 | `d` | Diff the stage; `b` sets a comparison base, `B` clears it |
 | `o` | Open the selected artifact in your browser; `,` and `.` select |
 | `[` `]` | Browse revision history |
@@ -122,7 +123,9 @@ The dashboard shows the stage strip, your in-flight runs, and a focused panel:
 | `T` | Pick a color theme, with live preview |
 | `q` | Detach; execution continues |
 
-**Chat** leads with anything blocking the run — readiness problems Plan must resolve, recovery in progress, or a service down in the VM — then the stage's attempts, summaries and steering messages. **Checkpoint** shows the accepted result and which stages it runs after. **Decision Log** reads like a record of the run: when each thing was decided, by whom (worker, supervisor, you, or the coordinator), and why — Plan's findings, supervisor accepts and rejections with their corrections, your steering and approvals, and rewinds with what they reran and whether the objective or configuration changed.
+Anything blocking the run sits in the run summary above the tabs, visible from every tab: readiness problems Plan must resolve, recovery in progress, and service states when a preview is configured or a service is down.
+
+**Chat** is the selected stage's conversation in the order it happened: attempts starting, the worker's summaries, the supervisor's accepts and rejections, your steering, your questions and the supervisor's answers, and approvals with who approved and when. It also lists the stage's artifacts for `,` `.` and `o`. **Decision Log** reads like a record of the whole run: when each thing was decided, by whom (worker, supervisor, you, or the coordinator), and why. That includes Plan's scope and findings, supervisor accepts and rejections with their corrections, steering and questions and where they went, approvals, rewinds with what they reran, retries and stall nudges, stops at the token ceiling, and what publishing did, including the pull request or why it failed.
 
 Closing the dashboard never stops the run. For scripts, `envctl run show <run> --json` has the same information.
 
@@ -162,6 +165,20 @@ envctl run message <run> --node code --to worker --text "Use the existing CSV wr
 ```
 
 This reaches the running agent within seconds. envctl interrupts its turn and resumes the same session with your message, keeping the work it has already done. The supervisor also sees your messages and should reject work that ignores them. Each message shows its status: delivered live, or queued for the next attempt.
+
+### Ask instead of steering
+
+A message changes the work. To find something out without changing it, ask the stage's supervisor:
+
+```bash
+envctl run ask <run> --node code --text "Is there a PR open for this yet?"
+```
+
+In the dashboard, press `?`. The answer comes back in the stage's Chat, and `envctl run ask` waits for it and prints it (`--wait=false` to return at once; `envctl run show` lists questions and answers).
+
+An answer never touches the work. It comes from a separate, read-only invocation of the stage's supervisor, using the stage's supervisor model: it can read the worktree but cannot edit files or run commands, and a running worker keeps going undisturbed. With Claude the answer branches the supervisor's own session, so it knows what it reviewed without adding the question to the transcript it resumes later; Codex, which cannot branch a session, starts fresh from the stage's summaries, review, checks and pull requests. Follow-up questions see earlier answers.
+
+You can ask while a stage is running, while it waits for approval, and after it is accepted, for as long as the run keeps its VM. After `envctl run close`, or on a superseded revision, a question fails and says to rewind. Answers count toward the run's token ceiling, and a run already at its ceiling refuses new questions.
 
 ## 6. Review a checkpoint
 

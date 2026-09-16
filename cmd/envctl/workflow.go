@@ -299,7 +299,7 @@ func runCmd(g *globals) *cobra.Command {
 			return printRun(cmd, g, run)
 		}})
 	}
-	for _, kind := range []string{"message", "rewind", "cancel", "close", "approve", "priority"} {
+	for _, kind := range []string{"message", "ask", "rewind", "cancel", "close", "approve", "priority"} {
 		c.AddCommand(runActionCmd(g, kind))
 	}
 	plugins := &cobra.Command{Use: "plugin", Short: "Change invocation plugins and reopen Plan in a new revision"}
@@ -384,6 +384,7 @@ func runActionCmd(g *globals, action string) *cobra.Command {
 	req := daemon.ActionRequest{Action: action}
 	var pluginFile string
 	var configFile string
+	wait, waitFor := true, answerWait
 	c := &cobra.Command{Use: action + " <run>", Short: action + " a workflow", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := connect(cmd.Context(), g)
 		if err != nil {
@@ -438,6 +439,9 @@ func runActionCmd(g *globals, action string) *cobra.Command {
 		if err != nil {
 			return err
 		}
+		if action == "ask" {
+			return awaitAnswer(cmd, g, client, result, req, wait, waitFor)
+		}
 		return printRun(cmd, g, result)
 	}}
 	c.Flags().StringVar(&req.OperationID, "operation-id", "", "idempotency key")
@@ -455,6 +459,15 @@ func runActionCmd(g *globals, action string) *cobra.Command {
 		_ = c.MarkFlagRequired("text")
 		c.Flags().StringVar(&req.Recipient, "to", "supervisor", "supervisor or worker")
 		c.Flags().StringVar(&req.Node, "node", "", "stage to address")
+	case "ask":
+		c.Short = "ask a stage's supervisor a question, without changing the work"
+		c.Flags().StringVar(&req.Node, "node", "", "stage whose supervisor answers")
+		_ = c.MarkFlagRequired("node")
+		c.Flags().StringVar(&req.Message, "text", "", "the question")
+		_ = c.MarkFlagRequired("text")
+		c.Flags().StringVar(&req.Actor, "actor", os.Getenv("USER"), "who is asking")
+		c.Flags().BoolVar(&wait, "wait", true, "wait for the answer and print it")
+		c.Flags().DurationVar(&waitFor, "timeout", answerWait, "how long to wait for an answer")
 	case "rewind":
 		c.Flags().StringVar(&req.Node, "to", "", "stage to revisit")
 		_ = c.MarkFlagRequired("to")
@@ -488,6 +501,7 @@ func printRun(cmd *cobra.Command, g *globals, r *workflow.Run) error {
 	}
 	fmt.Fprintf(out, "  VM: %s\n", vm)
 	printAttention(out, r)
+	printQuestions(out, rev)
 	printRuntime(out, "", rev.Runtime)
 	for node, child := range rev.ChildRuntimes {
 		if child != nil && (child.Runtime.PreviewURL != "" || len(child.Runtime.Services) > 0) {

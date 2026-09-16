@@ -253,6 +253,57 @@ The log posts one comment per event:
 | Rewound | The new revision, its target stage, and the reason or objective change. |
 | Needs attention | The cause, such as the token ceiling or a publication failure. |
 
+### Moving the issue's status
+
+`tracker.mapping` moves the linked issue through your tracker's statuses as the run progresses, so the ticket stays in step without anyone updating it. It is optional; without it, statuses are never changed and only comments are posted.
+
+The fastest way to write it is the wizard, which reads your team's real statuses and suggests a mapping:
+
+```bash
+envctl tracker setup
+```
+
+It asks for a credential **file path** — never the key itself, which it reads, checks, and never prints or writes — then your team, then a status for each event, chosen from a numbered list with sensible defaults already selected. It shows the YAML and the transitions a typical run would make before writing anything, and re-running it edits the existing mapping. It needs a terminal and refuses otherwise.
+
+A worked Linear example, for a team with the default board:
+
+```yaml
+tracker:
+  provider: linear
+  credential: file:/Users/me/.config/envctl/linear.token
+  mapping:
+    default:
+      run_started: In Progress
+      awaiting_approval:
+        approved-change: In Review
+      pr_published: Done
+      cancelled: Canceled
+      rewound: In Progress
+    small:
+      run_started: In Progress
+      pr_published: Done
+```
+
+`mapping` is keyed by workflow name (`default` for the `workflow:` section), because named workflows need not share stages. Events:
+
+| Event | Fires when | Keyed by stage |
+| --- | --- | --- |
+| `run_started` | The revision starts preparing or running | no |
+| `stage_started` | A stage starts | yes |
+| `stage_accepted` | A stage's result is accepted | yes |
+| `awaiting_approval` | A stage waits for a person | yes |
+| `approved` | A result is approved | no |
+| `pr_published` | The approved change opens its pull request | no |
+| `needs_attention` | The run needs attention | no |
+| `cancelled` | The run is cancelled | no |
+| `rewound` | A rewind starts a new revision | no |
+
+An unknown event or stage name is rejected when the configuration loads. Status names are checked during Plan's readiness against your team's actual workflow states, without changing anything; an unknown status fails readiness and lists the valid ones.
+
+Each transition applies exactly once, in order, across coordinator restarts, using the same durable receipts as comments. A transition waiting to retry holds back the ones after it, so a brief outage cannot leave the issue at an earlier status than the run reached. A tracker outage or rejected transition never blocks or fails the workflow; `envctl run show` reports pending and failed updates.
+
+**Manual changes are overwritten.** If someone moves the issue by hand, the next mapped event moves it again: the mapping always applies, and the last write wins. This is not a free choice — "only move forward" would contradict `rewound`, since a rewind after `Done` has to be able to move the issue back to work. Leave an event unmapped if you would rather it never touch the status.
+
 Link a specific run to an issue with `--task-ref` (a Linear issue URL or an identifier like `ENG-123`), the dashboard's `n` input (a second, optional prompt after the objective), or the `task_ref` argument of the MCP `envctl_create` tool. A run without a link posts nothing, even with a tracker configured.
 
 When a tracker is configured, Plan's readiness probes verify the credential, that the linked issue exists, and that the credential can comment on it, without posting anything.

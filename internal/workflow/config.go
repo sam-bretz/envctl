@@ -121,7 +121,146 @@ type Harness struct {
 type TrackerConfig struct {
 	Provider   string `yaml:"provider" json:"provider"`
 	Credential string `yaml:"credential" json:"credential"`
+	// Mapping is keyed by the selected workflow name (or "default"). A nil
+	// mapping preserves the identity of configurations that only post comments.
+	Mapping map[string]TrackerStatusMapping `yaml:"mapping,omitempty" json:"mapping,omitempty"`
 }
+
+// TrackerStatusMapping maps workflow events to the issue's workflow-state
+// names. Stage events are keyed by stage because named workflows need not
+// share stage IDs or state policy.
+type TrackerStatusMapping struct {
+	RunStarted       string            `yaml:"run_started,omitempty" json:"run_started,omitempty"`
+	StageStarted     map[string]string `yaml:"stage_started,omitempty" json:"stage_started,omitempty"`
+	StageAccepted    map[string]string `yaml:"stage_accepted,omitempty" json:"stage_accepted,omitempty"`
+	AwaitingApproval map[string]string `yaml:"awaiting_approval,omitempty" json:"awaiting_approval,omitempty"`
+	Approved         string            `yaml:"approved,omitempty" json:"approved,omitempty"`
+	PRPublished      string            `yaml:"pr_published,omitempty" json:"pr_published,omitempty"`
+	NeedsAttention   string            `yaml:"needs_attention,omitempty" json:"needs_attention,omitempty"`
+	Cancelled        string            `yaml:"cancelled,omitempty" json:"cancelled,omitempty"`
+	Rewound          string            `yaml:"rewound,omitempty" json:"rewound,omitempty"`
+}
+
+var trackerStatusEvents = []string{
+	"approved", "awaiting_approval", "cancelled", "needs_attention", "pr_published",
+	"rewound", "run_started", "stage_accepted", "stage_started",
+}
+
+// UnmarshalYAML accepts both the Go-shaped underscore spelling and the
+// hyphenated spelling used by the event names in the CLI and captain's log.
+// Parsing the event keys here lets config validation report the complete valid
+// event vocabulary instead of exposing a generic YAML field error.
+func (m *TrackerStatusMapping) UnmarshalYAML(value *yaml.Node) error {
+	var fields map[string]yaml.Node
+	if err := value.Decode(&fields); err != nil {
+		return err
+	}
+	*m = TrackerStatusMapping{}
+	for name, node := range fields {
+		canonical := strings.ReplaceAll(name, "-", "_")
+		var err error
+		switch canonical {
+		case "run_started":
+			err = node.Decode(&m.RunStarted)
+		case "stage_started":
+			err = node.Decode(&m.StageStarted)
+		case "stage_accepted":
+			err = node.Decode(&m.StageAccepted)
+		case "awaiting_approval":
+			err = node.Decode(&m.AwaitingApproval)
+		case "approved":
+			err = node.Decode(&m.Approved)
+		case "pr_published":
+			err = node.Decode(&m.PRPublished)
+		case "needs_attention":
+			err = node.Decode(&m.NeedsAttention)
+		case "cancelled":
+			err = node.Decode(&m.Cancelled)
+		case "rewound":
+			err = node.Decode(&m.Rewound)
+		default:
+			return fmt.Errorf("unknown tracker mapping event %q; valid events are %s", name, strings.Join(trackerStatusEvents, ", "))
+		}
+		if err != nil {
+			return fmt.Errorf("tracker mapping event %s: status must be a string or stage-to-status map: %w", name, err)
+		}
+	}
+	return nil
+}
+
+// Status returns the mapped status for an event. An empty result means that
+// this event is intentionally unmapped.
+func (m TrackerStatusMapping) Status(event, stage string) string {
+	var status string
+	switch event {
+	case "run_started":
+		status = m.RunStarted
+	case "stage_started":
+		status = m.StageStarted[stage]
+	case "stage_accepted":
+		status = m.StageAccepted[stage]
+	case "awaiting_approval":
+		status = m.AwaitingApproval[stage]
+	case "approved":
+		status = m.Approved
+	case "pr_published":
+		status = m.PRPublished
+	case "needs_attention":
+		status = m.NeedsAttention
+	case "cancelled":
+		status = m.Cancelled
+	case "rewound":
+		status = m.Rewound
+	}
+	return strings.TrimSpace(status)
+}
+
+func (c TrackerConfig) mappingFor(workflowName string) (TrackerStatusMapping, bool) {
+	if workflowName == "" {
+		workflowName = DefaultWorkflow
+	}
+	m, ok := c.Mapping[workflowName]
+	return m, ok
+}
+
+// TrackerStatus returns a configured status for one selected workflow event.
+func (c TrackerConfig) TrackerStatus(workflowName, event, stage string) string {
+	m, ok := c.mappingFor(workflowName)
+	if !ok {
+		return ""
+	}
+	return m.Status(event, stage)
+}
+
+// TrackerStatuses returns the distinct status names configured for a selected
+// workflow in stable order, for read-only readiness verification.
+func (c TrackerConfig) TrackerStatuses(workflowName string) []string {
+	m, ok := c.mappingFor(workflowName)
+	if !ok {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(status string) {
+		status = strings.TrimSpace(status)
+		if status != "" && !seen[status] {
+			seen[status] = true
+			out = append(out, status)
+		}
+	}
+	add(m.RunStarted)
+	for _, statuses := range []map[string]string{m.StageStarted, m.StageAccepted, m.AwaitingApproval} {
+		for _, status := range statuses {
+			add(status)
+		}
+	}
+	for _, status := range []string{m.Approved, m.PRPublished, m.NeedsAttention, m.Cancelled, m.Rewound} {
+		add(status)
+	}
+	sort.Strings(out)
+	return out
+}
+
 type PluginRef struct {
 	ID          string            `yaml:"id" json:"id"`
 	Source      string            `yaml:"source" json:"source"`
@@ -467,6 +606,9 @@ func (c Config) Validate() error {
 		case kind == "file" && !filepath.IsAbs(path):
 			errs = append(errs, errors.New("tracker credential file: reference must be an absolute path"))
 		}
+		if err := c.validateTrackerMapping(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if err := c.Workflow.Validate(); err != nil {
 		errs = append(errs, err)
@@ -484,7 +626,8 @@ func (c Config) Validate() error {
 			continue
 		}
 		selected := c
-		selected.Workflow, selected.Workflows = c.Workflows[name], nil
+		selected.Workflow, selected.Workflows, selected.WorkflowName = c.Workflows[name], nil, name
+		selected = selected.selectTrackerMapping(name)
 		if err := selected.Validate(); err != nil {
 			errs = append(errs, fmt.Errorf("workflows.%s: %w", name, err))
 		}
@@ -509,6 +652,51 @@ func (c Config) Validate() error {
 		for _, check := range n.Checks {
 			if check.Repository != "" && !seen[check.Repository] {
 				errs = append(errs, fmt.Errorf("node %s check references unknown repository %s", id, check.Repository))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (c Config) validateTrackerMapping() error {
+	if c.Tracker == nil || len(c.Tracker.Mapping) == 0 {
+		return nil
+	}
+	definitions := map[string]Definition{}
+	if c.Workflows == nil {
+		name := c.WorkflowName
+		if name == "" {
+			name = DefaultWorkflow
+		}
+		definitions[name] = c.Workflow
+	} else {
+		definitions[DefaultWorkflow] = c.Workflow
+		for name, definition := range c.Workflows {
+			definitions[name] = definition
+		}
+	}
+	validWorkflowNames := make([]string, 0, len(definitions))
+	for name := range definitions {
+		validWorkflowNames = append(validWorkflowNames, name)
+	}
+	slices.Sort(validWorkflowNames)
+	var errs []error
+	for name, mapping := range c.Tracker.Mapping {
+		definition, ok := definitions[name]
+		if !ok {
+			errs = append(errs, fmt.Errorf("tracker mapping names unknown workflow %q; valid workflows are %s", name, strings.Join(validWorkflowNames, ", ")))
+			continue
+		}
+		for event, statuses := range map[string]map[string]string{
+			"stage_started":     mapping.StageStarted,
+			"stage_accepted":    mapping.StageAccepted,
+			"awaiting_approval": mapping.AwaitingApproval,
+		} {
+			for stage := range statuses {
+				if _, ok := definition.Nodes[stage]; !ok {
+					validStages, _ := definition.Order()
+					errs = append(errs, fmt.Errorf("tracker mapping %s.%s names unknown stage %q; valid stages are %s", name, event, stage, strings.Join(validStages, ", ")))
+				}
 			}
 		}
 	}

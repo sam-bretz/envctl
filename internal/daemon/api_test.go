@@ -204,3 +204,33 @@ func TestServeSingleOwnerAndRestart(t *testing.T) {
 		t.Fatal("coordinator failed to stop")
 	}
 }
+
+func TestARefusedCancelNeverMovesTheIssueToCancelled(t *testing.T) {
+	// Cancel refuses on a finished run. If the cancelled status were enqueued
+	// regardless, the tracker would show completed work as cancelled while
+	// the run itself stayed completed.
+	c, store := testAPI(t)
+	r := create(t, c)
+	updated, err := store.Mutate(context.Background(), r.ID, r.Version, "finish", "fixture.completed", nil, func(run *workflow.Run) error {
+		run.TaskRef = "ENG-1"
+		run.Current().State = "completed"
+		run.Current().Config.Tracker = &workflow.TrackerConfig{Provider: "linear", Credential: "env:LINEAR_API_KEY",
+			Mapping: map[string]workflow.TrackerStatusMapping{workflow.DefaultWorkflow: {Cancelled: "Canceled"}}}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = c.Action(context.Background(), r.ID, ActionRequest{OperationID: "cancel-finished", ExpectedVersion: updated.Version, Revision: updated.CurrentRevision, Action: "cancel"}); err == nil {
+		t.Fatal("cancel accepted a completed run")
+	}
+	after, err := c.Get(context.Background(), r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range after.TrackerLog {
+		if entry.Kind == workflow.TrackerEventCancelled {
+			t.Fatalf("a refused cancel still queued the issue to move to %q", entry.StatusName)
+		}
+	}
+}

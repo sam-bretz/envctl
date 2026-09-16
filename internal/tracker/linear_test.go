@@ -176,6 +176,43 @@ func TestLinearCommentCreatesWhenMarkerAbsent(t *testing.T) {
 	}
 }
 
+func TestLinearSetStatusResolvesTheTeamStateAndUpdatesTheIssue(t *testing.T) {
+	rs := newRecordingServer(t)
+	rs.handler = func(req graphQLRequest) (int, string) {
+		switch {
+		case strings.Contains(req.Query, "state { name }"):
+			return 200, `{"data":{"issue":{"id":"issue_1","team":{"id":"team_1"},"state":{"name":"Todo"}}}}`
+		case strings.Contains(req.Query, "states { nodes"):
+			return 200, `{"data":{"team":{"states":{"nodes":[{"id":"state_todo","name":"Todo"},{"id":"state_progress","name":"In Progress"}]}}}}`
+		case strings.Contains(req.Query, "issueUpdate"):
+			return 200, `{"data":{"issueUpdate":{"success":true}}}`
+		}
+		return 200, `{"data":{}}`
+	}
+	if err := newClient(rs).SetStatus(context.Background(), "ENG-1", "In Progress"); err != nil {
+		t.Fatal(err)
+	}
+	if rs.count() != 3 || !strings.Contains(rs.last().Query, "issueUpdate") {
+		t.Fatalf("status update did not read issue/state and mutate it: %d requests, last %q", rs.count(), rs.last().Query)
+	}
+}
+
+func TestLinearSetStatusDoesNotMutateAnIssueAlreadyInTheRequestedState(t *testing.T) {
+	rs := newRecordingServer(t)
+	rs.handler = func(req graphQLRequest) (int, string) {
+		if strings.Contains(req.Query, "state { name }") {
+			return 200, `{"data":{"issue":{"id":"issue_1","team":{"id":"team_1"},"state":{"name":"Done"}}}}`
+		}
+		return 200, `{"data":{}}`
+	}
+	if err := newClient(rs).SetStatus(context.Background(), "ENG-1", "Done"); err != nil {
+		t.Fatal(err)
+	}
+	if rs.count() != 1 {
+		t.Fatalf("already reconciled status made extra API calls: %d", rs.count())
+	}
+}
+
 func TestLinearGraphQLErrorsAndHTTPErrors(t *testing.T) {
 	rs := newRecordingServer(t)
 	rs.handler = func(graphQLRequest) (int, string) { return 200, `{"errors":[{"message":"boom"}]}` }

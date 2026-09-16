@@ -22,6 +22,14 @@ type Tracker interface {
 	Comment(ctx context.Context, issueRef, marker, body string) (commentID string, err error)
 }
 
+// StatusUpdater reconciles an issue to a named workflow state. Implementations
+// must treat an issue already in the requested state as success; that read
+// before mutation closes the crash window between a remote update and the
+// durable receipt.
+type StatusUpdater interface {
+	SetStatus(ctx context.Context, issueRef, statusName string) error
+}
+
 // Prober implements the readiness half of a tracker: verifying credential,
 // issue existence and comment permission without posting anything.
 type Prober interface {

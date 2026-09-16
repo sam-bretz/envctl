@@ -70,9 +70,13 @@ type TrackerLogEntry struct {
 	Occurred  time.Time `json:"occurred"`
 	Status    string    `json:"status"` // pending, posted, failed
 	CommentID string    `json:"comment_id,omitempty"`
-	Attempts  int       `json:"attempts,omitempty"`
-	RetryAt   time.Time `json:"retry_at,omitempty"`
-	Error     string    `json:"error,omitempty"`
+	// StatusName makes this outbox entry a workflow-state transition instead
+	// of a comment. It is frozen when the event occurs so later config edits
+	// cannot reinterpret an already-recorded transition.
+	StatusName string    `json:"status_name,omitempty"`
+	Attempts   int       `json:"attempts,omitempty"`
+	RetryAt    time.Time `json:"retry_at,omitempty"`
+	Error      string    `json:"error,omitempty"`
 }
 
 const (
@@ -84,6 +88,18 @@ const (
 	// TrackerKindPublished records the pull requests a change stage opened, so
 	// the issue carries the link to the work without anyone opening envctl.
 	TrackerKindPublished = "published"
+)
+
+const (
+	TrackerEventRunStarted       = "run_started"
+	TrackerEventStageStarted     = "stage_started"
+	TrackerEventStageAccepted    = "stage_accepted"
+	TrackerEventAwaitingApproval = "awaiting_approval"
+	TrackerEventApproved         = "approved"
+	TrackerEventPRPublished      = "pr_published"
+	TrackerEventNeedsAttention   = "needs_attention"
+	TrackerEventCancelled        = "cancelled"
+	TrackerEventRewound          = "rewound"
 )
 
 // AppendTrackerLog is the single enqueue point for every captain's-log event.
@@ -98,6 +114,41 @@ func (r *Run) AppendTrackerLog(cfg *TrackerConfig, kind, revision, node, attempt
 	r.TrackerLog = append(r.TrackerLog, TrackerLogEntry{
 		ID: ID("tlog"), Kind: kind, Revision: revision, Node: node,
 		Attempt: attempt, Detail: detail, Occurred: now, Status: "pending",
+	})
+	event := ""
+	switch kind {
+	case TrackerKindStageCompleted:
+		event = TrackerEventStageAccepted
+	case TrackerKindAwaitingApproval:
+		event = TrackerEventAwaitingApproval
+	case TrackerKindApproved:
+		event = TrackerEventApproved
+	case TrackerKindRewound:
+		event = TrackerEventRewound
+	case TrackerKindNeedsAttention:
+		event = TrackerEventNeedsAttention
+	}
+	r.AppendTrackerStatus(cfg, event, revision, node, attempt, detail, now)
+}
+
+// AppendTrackerStatus adds only a mapped status transition. Unlike comments,
+// unmapped events do not grow the outbox, which keeps the old tracker behavior
+// and digest stable when status mapping is absent.
+func (r *Run) AppendTrackerStatus(cfg *TrackerConfig, event, revision, node, attempt, detail string, now time.Time) {
+	if cfg == nil || strings.TrimSpace(r.TaskRef) == "" || event == "" {
+		return
+	}
+	workflowName := DefaultWorkflow
+	if rev := r.Revision(revision); rev != nil {
+		workflowName = rev.Config.WorkflowName
+	}
+	status := cfg.TrackerStatus(workflowName, event, node)
+	if status == "" {
+		return
+	}
+	r.TrackerLog = append(r.TrackerLog, TrackerLogEntry{
+		ID: ID("tstatus"), Kind: event, Revision: revision, Node: node,
+		Attempt: attempt, Detail: detail, Occurred: now, Status: "pending", StatusName: status,
 	})
 }
 

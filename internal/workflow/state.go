@@ -257,6 +257,17 @@ type Review struct {
 	Summary        string `json:"summary"`
 	EvidenceDigest string `json:"evidence_digest"`
 	ResultDigest   string `json:"result_digest"`
+	// Variations are alternative approaches the supervisor judged credible,
+	// recorded with the review that accepted this one. They sit outside
+	// WorkDigest, which clears Review, so recording them never changes what
+	// an approval is bound to.
+	Variations []Variation `json:"variations,omitempty"`
+}
+
+// Variation is one alternative approach a supervisor proposed.
+type Variation struct {
+	Name      string `json:"name"`
+	Rationale string `json:"rationale"`
 }
 type Approval struct {
 	Actor        string    `json:"actor"`

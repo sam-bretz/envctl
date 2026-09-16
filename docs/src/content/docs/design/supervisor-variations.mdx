@@ -1,0 +1,72 @@
+---
+title: Supervisor-proposed variations
+description: How a supervisor's alternative approaches become isolated, comparable, choosable runs.
+---
+
+Status: design, with the first slice implemented. Tracks [#10](https://github.com/sam-bretz/envctl/issues/10). This document defines the target and the order to build it in; it does not claim the execution layer exists.
+
+## The problem
+
+When a stage has two or three credible approaches, the worker picks one and the supervisor accepts or corrects it. The alternatives are never built, so "which approach is better?" is a judgement one agent makes silently rather than evidence a person compares.
+
+## What exists today
+
+The first slice, implemented alongside this document:
+
+| Piece | Where |
+| --- | --- |
+| Opt-in per node: `variations: N`, 2 to 3, default off | `Node.Variations`, validated in `Config.Validate` |
+| Supervisor contract offers `variations` only to opted-in nodes | `agent.AssessmentSchemaFor`, `ParseAssessmentFor` |
+| Proposals recorded durably with the accepting review | `Review.Variations` |
+| Visible in `envctl run show --json` and the dashboard Checkpoint | `checkpointSummary` |
+
+Proposals are made **alongside** acceptance, never instead of it. The attempt state machine is unchanged, so an opted-in stage behaves exactly as before, and the proposals are evidence the execution layer can later act on. The dashboard labels them *considered, not built* so nothing implies a comparison that does not yet exist.
+
+Two invariants are tested and must survive every later step:
+
+- **Approval binding.** `Result.WorkDigest` clears `Review`, so recording variations never changes what an approval is bound to.
+- **Configuration identity.** `variations: 0` restores an existing configuration's digest exactly.
+
+## The constraint that shapes everything
+
+`Revision.Checkpoints` is a `map[string]Checkpoint` keyed by node: exactly one result per stage. Variations need several competing results for the same stages. Three ways to represent that:
+
+1. **Variation-scoped node IDs** (`code@polling`), expanding the DAG at runtime. Rejected: it mutates a configuration that is frozen into the revision and breaks its digest identity, and node-keyed maps appear throughout the engine.
+2. **Nested checkpoints** (`map[node]map[variation]Checkpoint`). Rejected: it changes every reader of checkpoints for a feature most runs never use.
+3. **Sibling revisions.** Each variation is its own `Revision`, forked from the same parent. **Recommended.**
+
+Sibling revisions fit because isolation is already per revision. A revision has its own checkpoints, attempts, runtime and source pins, and its output branch is derived from its ID (`OutputBranch(repo, rev.ID)`), so two variations cannot write to the same branch. `envctl run diff` already compares checkpoints across revisions, which is most of the side-by-side view. And the run token ceiling already counts usage across all revisions, so variations are bounded by `limits.run_tokens` without new accounting.
+
+What does not fit yet: revisions today form a linear chain. `Rewind` marks the previous revision `superseded`, and `Run.CurrentRevision` names exactly one. Variations need several revisions active at once, with none superseding the others until a person chooses.
+
+## Where variations branch
+
+The issue left open whether variations branch at Design or at Code, and whether the person or the supervisor picks the stage. **The node that proposes them is the branch point, and the person chooses it by where they set `variations`.** The supervisor chooses *which* alternatives; it never chooses where branching happens.
+
+Each variation reruns the proposing node with its name and rationale added as steering, then continues downstream through QA. Branching at Design therefore produces a separate design, implementation and test run per alternative; branching at Code keeps the accepted design and varies only the implementation. Both are legitimate, and the cost difference between them is exactly the choice a person should be making.
+
+## Target flow
+
+1. An opted-in stage's supervisor accepts the work and proposes two or three variations. *(Implemented.)*
+2. The coordinator forks one sibling revision per variation from the checkpoint *before* the proposing node. The accepted work continues as its own variation, "as proposed".
+3. Each variation runs to QA in its own worktree and runtime. **None reaches the approved-change gate**: no variation can publish before a person chooses.
+4. The dashboard and `run show --json` show every finished variation side by side: summary, supervisor rationale, diff, the checks run against which commit, and token usage.
+5. A new `choose` action makes one variation current and continues it to approval. The others move to a new terminal state, `not-chosen`, and stay reviewable as history. They are never published.
+
+## Risks
+
+- **Capacity.** Each variation holds a VM. `limits.vms` must bound how many run at once, with the rest queued rather than failing. On a single machine this matters more than tokens.
+- **Publication.** The only guard against a variation opening a pull request is that it never reaches approved-change before `choose`. That guard needs its own test, because a regression would publish work nobody picked.
+- **Cost.** A Design-to-QA pass has measured around 10M tokens, so three variations from Design is roughly 30M. `variations` is capped at 3 for this reason, and the run token ceiling stops the rest.
+
+## Delivery order
+
+Each step ships independently behind the opt-in, so an unfinished step changes nothing for workflows that do not set `variations`.
+
+| Step | Scope | State |
+| --- | --- | --- |
+| 1 | Opt-in, supervisor contract, durable proposals, visibility | **Done** |
+| 2 | Several concurrent sibling revisions; `Rewind` no longer the only way to fork | Not started |
+| 3 | Variations stop before approved-change; `choose` action and `not-chosen` state; publication guard test | Not started |
+| 4 | Side-by-side comparison in the dashboard and `run show --json` | Not started |
+| 5 | Capacity: queue variations under `limits.vms` | Not started |

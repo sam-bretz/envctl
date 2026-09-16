@@ -1,8 +1,10 @@
 package agent
 
 import (
-	"github.com/sam-bretz/envctl/internal/workflow"
+	"reflect"
 	"testing"
+
+	"github.com/sam-bretz/envctl/internal/workflow"
 )
 
 func TestWorkerCannotClaimAuthoritativeEvidence(t *testing.T) {
@@ -87,5 +89,56 @@ func TestPlanRequiresStructuredInventoryAndFrozenContractsRemainReadable(t *test
 	}
 	if _, err := ParseProposalWithSchema(current, frozen); err == nil {
 		t.Fatal("legacy contract accepted new undeclared fields")
+	}
+}
+
+func TestOnlyANodeThatOptsInOffersVariationsToItsSupervisor(t *testing.T) {
+	off := AssessmentSchemaFor(workflow.Node{})
+	if _, ok := off["properties"].(map[string]any)["variations"]; ok {
+		t.Fatal("a node that did not opt in offers variations")
+	}
+	// Every other caller of the plain schema must be unaffected.
+	if !reflect.DeepEqual(off, AssessmentSchema()) {
+		t.Fatal("opting out changed the supervisor contract")
+	}
+	on := AssessmentSchemaFor(workflow.Node{Variations: 3})
+	v, ok := on["properties"].(map[string]any)["variations"].(map[string]any)
+	if !ok || v["maxItems"] != 3 {
+		t.Fatalf("variations not bounded by the node's maximum: %v", v)
+	}
+}
+
+func TestASupervisorsVariationsAreRecordedOnlyWhenTheyAreAChoice(t *testing.T) {
+	node := workflow.Node{Variations: 3}
+	two := `{"accepted":true,"summary":"good","correction":"","variations":[{"name":"event sourcing","rationale":"if audit history matters"},{"name":"polling","rationale":"if the upstream has no webhooks"}]}`
+	got, err := ParseAssessmentFor(node, []byte(two))
+	if err != nil || len(got.Variations) != 2 || got.Variations[1].Name != "polling" {
+		t.Fatalf("valid variations rejected: %v %+v", err, got)
+	}
+
+	for name, raw := range map[string]string{
+		// One alternative is not a choice.
+		"a lone variation": `{"accepted":true,"summary":"s","variations":[{"name":"a","rationale":"r"}]}`,
+		// On a rejection the correction is the way forward.
+		"variations on a rejection": `{"accepted":false,"summary":"s","correction":"fix it","variations":[{"name":"a","rationale":"r"},{"name":"b","rationale":"r"}]}`,
+		// A person could not tell these apart when choosing.
+		"a repeated name": `{"accepted":true,"summary":"s","variations":[{"name":"Polling","rationale":"r"},{"name":"polling","rationale":"r"}]}`,
+		// The configured maximum bounds how many can be proposed.
+		"more than the maximum": `{"accepted":true,"summary":"s","variations":[{"name":"a","rationale":"r"},{"name":"b","rationale":"r"},{"name":"c","rationale":"r"},{"name":"d","rationale":"r"}]}`,
+		// A rationale is what makes a variation reviewable.
+		"a missing rationale": `{"accepted":true,"summary":"s","variations":[{"name":"a","rationale":""},{"name":"b","rationale":"r"}]}`,
+	} {
+		if _, err := ParseAssessmentFor(node, []byte(raw)); err == nil {
+			t.Fatalf("accepted %s", name)
+		}
+	}
+
+	// Proposing none is the right answer when one approach is clearly best.
+	if got, err := ParseAssessmentFor(node, []byte(`{"accepted":true,"summary":"s","variations":[]}`)); err != nil || len(got.Variations) != 0 {
+		t.Fatalf("an empty proposal was refused: %v", err)
+	}
+	// A node that did not opt in cannot smuggle variations through.
+	if _, err := ParseAssessmentFor(workflow.Node{}, []byte(two)); err == nil {
+		t.Fatal("variations accepted from a node that did not opt in")
 	}
 }

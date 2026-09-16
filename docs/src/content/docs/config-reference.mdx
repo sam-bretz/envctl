@@ -121,6 +121,26 @@ Rules for every workflow:
 
 Pick a workflow with `envctl run create --workflow small`, with `tab` in the dashboard's new-run input, or with the `workflow` argument of the MCP `envctl_create` tool. `envctl run workflows` lists them with their stages. A run stores only the workflow it selected, and a rewind with `--config` keeps using that workflow.
 
+## Workflow variations (version 2, experimental)
+
+`workflow.nodes.<id>.variations` lets that stage's supervisor propose alternative approaches it judged credible, recorded alongside its acceptance so a choice between designs is not made silently by one agent.
+
+```yaml
+workflow:
+  template: feature
+  nodes:
+    design:
+      variations: 3
+```
+
+| Field | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `workflow.nodes.<id>.variations` | integer | `0` (off) | `0`, or `2` to `3`: the most alternatives the supervisor may propose. Unset keeps the configuration digest unchanged. |
+
+The supervisor proposes variations only when it accepts the work, each with a name and a rationale, and proposes none when the approach taken is clearly right. They appear on the stage's Checkpoint in the dashboard and in `envctl run show --json`.
+
+**Variations are recorded, not yet built.** Nothing runs them as separate approaches today. How that will work is in the [supervisor-proposed variations design](/envctl/design/supervisor-variations/).
+
 ## Workflow limits (version 2, experimental)
 
 Version 2 workflow configurations set revision-wide limits under `limits`. A workflow node can override the attempt budget for its own assignments under `workflow.nodes.<id>.limits`. See the [workflow runtime design](/envctl/design/workflow-runtime/#child-runtimes-for-parallel-execution).

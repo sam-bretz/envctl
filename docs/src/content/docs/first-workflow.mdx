@@ -117,6 +117,7 @@ The dashboard shows the stage strip, your in-flight runs, and a focused panel:
 | `o` | Open the selected artifact; `,` and `.` select |
 | `[` `]` | Browse revision history |
 | `r` `a` `x` | Rewind, approve, cancel |
+| `c` | Close a finished run and release its VM |
 | `g` | Open the run's pull request in your browser |
 | `T` | Pick a color theme, with live preview |
 | `q` | Detach; execution continues |
@@ -196,11 +197,38 @@ envctl then pushes a revision branch and opens a draft pull request whose body l
 
 Press `g` in the dashboard, or run `envctl run pr <run> --open`, to open the pull request in your browser. Without `--open` the command prints the link.
 
-To stop a run and release its VM:
+To stop an unfinished run and release its VM:
 
 ```bash
 envctl run cancel <run>
 ```
+
+Cancel refuses on a run that already finished, so a successful run is never
+relabelled as cancelled. Close it instead.
+
+## When it's done
+
+Publishing the pull request finishes the run, but its VM keeps running so you
+can still inspect the services it built. Once the pull request is merged and
+you no longer need that VM, close the run:
+
+```bash
+envctl run close <run>
+```
+
+Or press `c` in the dashboard. Closing:
+
+- releases the run's VM and any child VMs;
+- keeps the run `completed`, with its checkpoints, artifacts, approvals and
+  pull request links;
+- moves it out of the in-flight list into the finished one.
+
+A closed run stays reviewable: diffs, artifacts and `envctl run pr` all read
+retained evidence and need no VM. Rewinding a closed run reopens it and
+provisions a new VM for the follow-up work.
+
+`envctl run show` and the dashboard both say whether a finished run still
+holds a VM.
 
 ## Optional: see the application
 

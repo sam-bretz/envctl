@@ -47,6 +47,7 @@ type Run struct {
 	Revisions       []Revision `json:"revisions"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+	ClosedAt        time.Time  `json:"closed_at,omitzero"`
 	// TrackerLog is an append-only outbox of captain's-log events, populated
 	// synchronously by AppendTrackerLog inside the same transitions that
 	// produce each event, and delivered later and independently by
@@ -780,10 +781,27 @@ func (r *Revision) HasUnfinishedDrain() bool {
 	}
 	return r.HasActive()
 }
-func (r *Run) Cancel(now time.Time) {
+
+// Close records that a completed run no longer needs its execution runtime.
+// Evidence stays in the run so review and rewind do not depend on the VM.
+func (r *Run) Close(now time.Time) error {
+	if !r.ClosedAt.IsZero() {
+		return nil
+	}
+	if r.Current() == nil || r.Current().State != "completed" {
+		return errors.New("only completed runs can be closed")
+	}
+	r.ClosedAt = now
+	return nil
+}
+
+func (r *Run) Cancel(now time.Time) error {
+	if r.Current() != nil && r.Current().State == "completed" {
+		return errors.New("completed runs stay completed; use envctl run close to release the VM")
+	}
 	for i := range r.Revisions {
 		rev := &r.Revisions[i]
-		if slices.Contains([]string{"queued", "preparing", "active", "draining", "recovering", "needs-attention", "completed"}, rev.State) {
+		if slices.Contains([]string{"queued", "preparing", "active", "draining", "recovering", "needs-attention"}, rev.State) {
 			rev.State = "cancelled"
 			for j := range rev.Attempts {
 				a := &rev.Attempts[j]
@@ -794,6 +812,7 @@ func (r *Run) Cancel(now time.Time) {
 			}
 		}
 	}
+	return nil
 }
 
 // Rewind invalidates the selected node and descendants. Unaffected checkpoints
@@ -822,6 +841,7 @@ func (r *Run) Rewind(node, objective string, config *Config, now time.Time) (str
 			return "", err
 		}
 	}
+	r.ClosedAt = time.Time{}
 	if objective == "" {
 		objective = old.Objective
 	}

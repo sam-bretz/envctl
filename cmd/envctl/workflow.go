@@ -284,7 +284,7 @@ func runCmd(g *globals) *cobra.Command {
 			return printRun(cmd, g, run)
 		}})
 	}
-	for _, kind := range []string{"message", "rewind", "cancel", "approve", "priority"} {
+	for _, kind := range []string{"message", "rewind", "cancel", "close", "approve", "priority"} {
 		c.AddCommand(runActionCmd(g, kind))
 	}
 	plugins := &cobra.Command{Use: "plugin", Short: "Change invocation plugins and reopen Plan in a new revision"}
@@ -467,6 +467,11 @@ func printRun(cmd *cobra.Command, g *globals, r *workflow.Run) error {
 		fmt.Fprintf(out, "  captain's log: %d pending, %d failed\n", pending, failed)
 	}
 	rev := r.Current()
+	vm := "released"
+	if r.VMCount() > 0 {
+		vm = "held"
+	}
+	fmt.Fprintf(out, "  VM: %s\n", vm)
 	printAttention(out, r)
 	printRuntime(out, "", rev.Runtime)
 	for node, child := range rev.ChildRuntimes {

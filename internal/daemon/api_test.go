@@ -97,6 +97,51 @@ func TestClientsShareDurableRevisionCheckedAPI(t *testing.T) {
 		t.Fatal("cursor", err)
 	}
 }
+
+func TestCloseReleasesNoEvidenceAndCancelLeavesCompletedWorkAlone(t *testing.T) {
+	c, store := testAPI(t)
+	r := create(t, c)
+	artifact, err := store.PutArtifact("result", "text/plain", []byte("retained evidence"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := workflow.Checkpoint{ID: "cp_done", Revision: r.CurrentRevision, Node: "approved-change", Result: workflow.Result{
+		Artifacts: []workflow.Artifact{artifact},
+		PRs:       map[string]string{"app": "https://github.com/example/app/pull/7"},
+	}}
+	updated, err := store.Mutate(context.Background(), r.ID, r.Version, "finish", "fixture.completed", nil, func(run *workflow.Run) error {
+		run.Current().State = "completed"
+		run.Current().Runtime = workflow.RuntimeState{ID: "vm-done", Ready: true, State: "running"}
+		run.Current().Checkpoints[checkpoint.Node] = checkpoint
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = c.Action(context.Background(), r.ID, ActionRequest{OperationID: "cancel-completed", ExpectedVersion: updated.Version, Revision: updated.CurrentRevision, Action: "cancel"})
+	if err == nil || !strings.Contains(err.Error(), "close") {
+		t.Fatalf("cancel did not reject completed work with close guidance: %v", err)
+	}
+	untouched, err := c.Get(context.Background(), r.ID)
+	if err != nil || untouched.Current().State != "completed" {
+		t.Fatalf("cancel changed completed work: %v %+v", err, untouched)
+	}
+
+	closed, err := c.Action(context.Background(), r.ID, ActionRequest{OperationID: "close-completed", ExpectedVersion: untouched.Version, Revision: untouched.CurrentRevision, Action: "close"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closed.Current().State != "completed" || closed.ClosedAt.IsZero() || closed.Current().Checkpoints[checkpoint.Node].Result.Artifacts[0].Digest != artifact.Digest {
+		t.Fatalf("close lost completed evidence: %+v", closed)
+	}
+	if got, err := c.Artifact(context.Background(), artifact.Digest); err != nil || string(got) != "retained evidence" {
+		t.Fatalf("closed artifact unavailable: %v %q", err, got)
+	}
+	if prs := closed.PullRequests(); len(prs) != 1 || prs[0].URL != checkpoint.Result.PRs["app"] {
+		t.Fatalf("closed PR evidence unavailable: %+v", prs)
+	}
+}
 func TestAPIHasNoAgentCompletionBypass(t *testing.T) {
 	c, _ := testAPI(t)
 	r := create(t, c)

@@ -187,8 +187,9 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 			run.Priority = req.Priority
 			return nil
 		case "cancel":
-			run.Cancel(now)
-			return nil
+			return run.Cancel(now)
+		case "close":
+			return run.Close(now)
 		case "rewind":
 			old := run.Current()
 			objectiveChanged := req.Task != "" && req.Task != old.Objective

@@ -187,8 +187,11 @@ func TestChildCapacityPriorityRetryAndRelease(t *testing.T) {
 	if h.run().VMCount() != 2 || b.releases[first] != 1 || !h.run().Current().ChildRuntimes["right"].Runtime.Ready {
 		t.Fatal("completed run lost its application runtime or replayed a completed release")
 	}
-	h.mutate(func(r *workflow.Run) error { r.Cancel(h.now); return nil })
+	h.mutate(func(r *workflow.Run) error { return r.Close(h.now) })
 	childUntil(h, func() bool { return h.run().VMCount() == 0 })
+	if h.run().Current().State != "completed" {
+		t.Fatal("closing changed the completed run state")
+	}
 }
 
 func TestChildReadinessAndRecoveryDoNotStopSibling(t *testing.T) {

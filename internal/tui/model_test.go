@@ -106,6 +106,31 @@ func TestChatUsesSnapshotVersionAndRecipient(t *testing.T) {
 		t.Fatal(api.request)
 	}
 }
+
+func TestCloseKeyUsesTheShownCompletedRun(t *testing.T) {
+	m := modelFixture(t)
+	m.Runs[0].Current().State = "completed"
+	m.Runs[0].Current().Runtime = workflow.RuntimeState{ID: "vm-done", Ready: true, State: "running"}
+	_, cmd := key(m, "c")
+	if cmd == nil {
+		t.Fatal("close key did not issue an action")
+	}
+	cmd()
+	if got := m.API.(*fakeAPI).request; got.Action != "close" || got.ExpectedVersion != m.Runs[0].Version || got.Revision != m.Runs[0].CurrentRevision {
+		t.Fatalf("close action did not use the shown run: %+v", got)
+	}
+}
+
+func TestClosedRunsAreListedAsFinishedWithRuntimeVisibility(t *testing.T) {
+	m := modelFixture(t)
+	m.Width, m.Height = 120, 40
+	m.Runs[0].Current().State = "completed"
+	m.Runs[0].ClosedAt = time.Now().UTC()
+	view := m.View().Content
+	if !strings.Contains(view, "FINISHED WORKFLOWS") || strings.Contains(view, "IN-FLIGHT WORKFLOWS") || !strings.Contains(view, "VM released") {
+		t.Fatalf("closed run visibility/grouping missing:\n%s", view)
+	}
+}
 func TestNavigationNeverCancelsExecution(t *testing.T) {
 	m := modelFixture(t)
 	_, cmd := key(m, "q")

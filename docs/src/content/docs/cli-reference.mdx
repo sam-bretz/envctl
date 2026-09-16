@@ -66,6 +66,19 @@ envctl run pr <run> --open   # open them in the browser
 
 In the dashboard, `g` opens the selected run's pull requests from any stage. Changes that also published submodule pull requests list each one. `--json` prints `[{"key", "url"}]`; before publication the command exits 1 with "no pull request yet".
 
+## Closing a finished run
+
+```bash
+envctl run close <run>       # release the VM, keep the run completed
+envctl run cancel <run>      # stop an unfinished run
+```
+
+Publishing the pull request finishes a run, but its VM stays up so the services it built remain inspectable. `run close` releases that VM and any child VMs, keeps the run `completed` with its checkpoints, artifacts, approvals and pull request links, and moves it out of the in-flight list. In the dashboard, `c` closes the selected run.
+
+`run cancel` refuses on a run that already finished and points to `run close`, so a successful run is never relabelled `cancelled`. Only unfinished revisions are cancelled.
+
+A closed run stays reviewable: diffs, artifacts and `run pr` read retained evidence and need no VM. Rewinding a closed run reopens it and provisions a new VM. `run show` and the dashboard report whether a finished run still holds a VM.
+
 ## Web dashboard
 
 ```bash

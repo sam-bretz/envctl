@@ -89,10 +89,11 @@ func (e *Engine) ReconcileChild(ctx context.Context, id, revision, node string) 
 	}
 	_, checkpointed := v.Checkpoints[node]
 	// Keep the last live application runtime(s) of a completed current run
-	// available for inspection, matching the serial runtime lifetime. Rewind
-	// or explicit cancellation releases them. Intermediate checkpoints release
-	// capacity for downstream work after their evidence has been retained.
-	release := (checkpointed && (v.State != "completed" || run.CurrentRevision != revision)) || slices.Contains([]string{"cancelled", "superseded"}, v.State)
+	// available for inspection until the person explicitly closes it, matching
+	// the serial runtime lifetime. Rewind or explicit cancellation/close releases
+	// them. Intermediate checkpoints release capacity for downstream work after
+	// their evidence has been retained.
+	release := (checkpointed && (v.State != "completed" || run.CurrentRevision != revision)) || slices.Contains([]string{"cancelled", "superseded"}, v.State) || (v.State == "completed" && !run.ClosedAt.IsZero())
 	// Explicit cancellation/rewind cleanup bypasses a previous operation's
 	// retry timer. Release failures retain their own backoff and reservation.
 	if child.Recovery != nil && child.Recovery.RetryAt.After(e.now()) && (!release || child.Recovery.Phase == "release") {

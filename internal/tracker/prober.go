@@ -2,6 +2,7 @@ package tracker
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/sam-bretz/envctl/internal/engine"
@@ -47,6 +48,21 @@ func (LinearProber) Probe(ctx context.Context, a engine.Assignment, capability s
 	}
 	if !ok {
 		return false, "credential lacks comment permission on the linked issue's team", nil
+	}
+	if statuses := cfg.TrackerStatuses(a.Revision.Config.WorkflowName); len(statuses) > 0 {
+		_, valid, err := client.workflowStates(ctx, teamID)
+		if err != nil {
+			return false, "could not verify tracker workflow statuses", nil
+		}
+		validSet := make(map[string]bool, len(valid))
+		for _, name := range valid {
+			validSet[strings.ToLower(name)] = true
+		}
+		for _, status := range statuses {
+			if !validSet[strings.ToLower(status)] {
+				return false, fmt.Sprintf("tracker status %q is unknown; valid statuses are %s", status, strings.Join(valid, ", ")), nil
+			}
+		}
 	}
 	return true, "Linear credential, issue and comment permission verified", nil
 }

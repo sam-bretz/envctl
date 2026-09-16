@@ -197,11 +197,7 @@ func (e *Engine) reconcileAttempt(ctx context.Context, run *workflow.Run, rev *w
 					return err
 				}
 				r.AppendTrackerLog(v.Config.Tracker, workflow.TrackerKindStageCompleted, v.ID, current.Node, current.ID, "", e.now())
-				// The pull request is the run's visible outcome, so it is
-				// logged as its own entry rather than buried in the stage's.
-				if len(prs) > 0 {
-					r.AppendTrackerLog(v.Config.Tracker, workflow.TrackerKindPublished, v.ID, current.Node, current.ID, "", e.now())
-				}
+				logPublication(r, v, current.Node, current.ID, prs, e.now())
 				return nil
 			})
 			if err != nil && !errors.Is(err, workflow.ErrConflict) {
@@ -225,4 +221,18 @@ func (e *Engine) reconcileAttempt(ctx context.Context, run *workflow.Run, rev *w
 		return true, err
 	}
 	return false, nil
+}
+
+// logPublication records a change's pull requests in the tracker: a comment
+// with the links, and the issue's move to its published status. The pull
+// request is the run's visible outcome, so it is logged as its own entry
+// rather than buried in the stage's. Both happen only when something was
+// actually published, because moving an issue to done for a change that
+// opened no pull request would be false.
+func logPublication(r *workflow.Run, v *workflow.Revision, node, attempt string, prs map[string]string, now time.Time) {
+	if len(prs) == 0 {
+		return
+	}
+	r.AppendTrackerLog(v.Config.Tracker, workflow.TrackerKindPublished, v.ID, node, attempt, "", now)
+	r.AppendTrackerStatus(v.Config.Tracker, workflow.TrackerEventPRPublished, v.ID, node, attempt, "", now)
 }

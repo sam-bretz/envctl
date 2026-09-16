@@ -159,6 +159,7 @@ func (e *Engine) Tick(ctx context.Context) error {
 					}
 					v.State = "preparing"
 					v.Runtime = workflow.RuntimeState{ID: "envctl-" + strings.ReplaceAll(v.ID, "_", "-"), Provider: v.Config.Runtime.Provider, Location: "local", State: "preparing"}
+					r.AppendTrackerStatus(v.Config.Tracker, workflow.TrackerEventRunStarted, v.ID, "", "", "", e.now())
 					return nil
 				})
 				if err != nil {
@@ -445,6 +446,7 @@ func (e *Engine) Reconcile(ctx context.Context, id, revision string) error {
 						Provider: v.Config.Runtime.Provider, Location: "local", State: "preparing",
 					}}
 				}
+				r.AppendTrackerStatus(v.Config.Tracker, workflow.TrackerEventStageStarted, v.ID, node, attempt.ID, "", e.now())
 				return nil
 			})
 			// Capacity exhaustion is normal; Begin enforces it atomically.

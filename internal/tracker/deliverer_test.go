@@ -15,10 +15,11 @@ import (
 )
 
 type fakeTracker struct {
-	mu    sync.Mutex
-	fail  int // remaining calls that return an error before succeeding
-	calls int
-	id    string
+	mu       sync.Mutex
+	fail     int // remaining calls that return an error before succeeding
+	calls    int
+	id       string
+	statuses []string
 }
 
 func (f *fakeTracker) Comment(ctx context.Context, ref, marker, body string) (string, error) {
@@ -39,6 +40,23 @@ func (f *fakeTracker) count() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.calls
+}
+
+func (f *fakeTracker) SetStatus(ctx context.Context, ref, statusName string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail > 0 {
+		f.fail--
+		return errors.New("temporary linear outage")
+	}
+	f.statuses = append(f.statuses, statusName)
+	return nil
+}
+
+func (f *fakeTracker) statusCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.statuses...)
 }
 
 func delivererFixture(t *testing.T) (*runstore.Store, *workflow.Run) {
@@ -200,5 +218,108 @@ func TestDelivererFailureNeverMutatesRunStateBeyondTheEntry(t *testing.T) {
 	}
 	if after.TrackerLog[0].Status != "pending" || after.TrackerLog[0].Attempts != 1 {
 		t.Fatalf("unexpected entry after failure: %+v", after.TrackerLog[0])
+	}
+}
+
+func TestDelivererAppliesMappedStatusesOnceAndInOrder(t *testing.T) {
+	store, run := delivererFixture(t)
+	run.Current().Config.Tracker.Mapping = map[string]workflow.TrackerStatusMapping{
+		"default": {RunStarted: "In Progress", NeedsAttention: "Needs Attention"},
+	}
+	run.TrackerLog = []workflow.TrackerLogEntry{
+		{ID: "tstatus_1", Kind: workflow.TrackerEventRunStarted, Revision: run.CurrentRevision, Status: "pending", StatusName: "In Progress"},
+		{ID: "tstatus_2", Kind: workflow.TrackerEventNeedsAttention, Revision: run.CurrentRevision, Status: "pending", StatusName: "Needs Attention"},
+	}
+	ctx := context.Background()
+	run, err := store.Create(ctx, "op-create", nil, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeTracker{}
+	d := &Deliverer{Store: store, newTracker: func(workflow.TrackerConfig) (Tracker, error) { return fake, nil }}
+
+	d.tick(ctx)
+	if got := fake.statusCalls(); len(got) != 1 || got[0] != "In Progress" {
+		t.Fatalf("first status delivery = %v", got)
+	}
+	d.tick(ctx)
+	if got := fake.statusCalls(); len(got) != 2 || got[1] != "Needs Attention" {
+		t.Fatalf("ordered status delivery = %v", got)
+	}
+	d.tick(ctx)
+	if got := fake.statusCalls(); len(got) != 2 {
+		t.Fatalf("delivered statuses were repeated: %v", got)
+	}
+}
+
+func TestDelivererStatusReceiptReconcilesAfterRestart(t *testing.T) {
+	store, run := delivererFixture(t)
+	run.TrackerLog = []workflow.TrackerLogEntry{{ID: "tstatus_1", Kind: workflow.TrackerEventRunStarted, Revision: run.CurrentRevision, Status: "pending", StatusName: "In Progress"}}
+	ctx := context.Background()
+	run, err := store.Create(ctx, "op-create", nil, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeTracker{}
+	d := &Deliverer{Store: store, newTracker: func(workflow.TrackerConfig) (Tracker, error) { return fake, nil }}
+	path := d.receiptPath(run.ID, "tstatus_1")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(trackerReceipt{StatusName: "In Progress"})
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	d.tick(ctx)
+	if len(fake.statusCalls()) != 0 {
+		t.Fatal("status receipt did not prevent a repeated remote transition")
+	}
+	got, err := store.Get(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TrackerLog[0].Status != "posted" {
+		t.Fatalf("status receipt did not close the outbox entry: %+v", got.TrackerLog[0])
+	}
+}
+
+func TestDelivererDoesNothingForAnUnconfiguredStatusMapping(t *testing.T) {
+	store, run := delivererFixture(t)
+	run.TrackerLog = []workflow.TrackerLogEntry{{ID: "tlog_1", Kind: workflow.TrackerKindNeedsAttention, Revision: run.CurrentRevision, Detail: "first", Status: "pending"}}
+	ctx := context.Background()
+	run, err := store.Create(ctx, "op-create", nil, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeTracker{}
+	d := &Deliverer{Store: store, newTracker: func(workflow.TrackerConfig) (Tracker, error) { return fake, nil }}
+	d.tick(ctx)
+	if len(fake.statusCalls()) != 0 {
+		t.Fatal("unconfigured mapping caused a status transition")
+	}
+}
+
+func TestDelivererRetriesARejectedStatusWithoutBlockingTheRun(t *testing.T) {
+	store, run := delivererFixture(t)
+	run.TrackerLog = []workflow.TrackerLogEntry{{ID: "tstatus_1", Kind: workflow.TrackerEventRunStarted, Revision: run.CurrentRevision, Status: "pending", StatusName: "In Progress"}}
+	ctx := context.Background()
+	run, err := store.Create(ctx, "op-create", nil, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeTracker{fail: 2}
+	clock := time.Now()
+	d := &Deliverer{Store: store, Now: func() time.Time { return clock }, newTracker: func(workflow.TrackerConfig) (Tracker, error) { return fake, nil }}
+	for i := 0; i < 3; i++ {
+		d.tick(ctx)
+		clock = clock.Add(time.Minute)
+	}
+	got, err := store.Get(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.TrackerLog[0].Status != "posted" || len(fake.statusCalls()) != 1 {
+		t.Fatalf("rejected transition did not retry to success: entry=%+v statuses=%v", got.TrackerLog[0], fake.statusCalls())
 	}
 }

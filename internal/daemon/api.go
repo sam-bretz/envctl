@@ -187,7 +187,14 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 			run.Priority = req.Priority
 			return nil
 		case "cancel":
-			return run.Cancel(now)
+			// Cancel refuses on a finished run. Moving the issue to its
+			// cancelled status after a refusal would mark completed work as
+			// cancelled in the tracker while the run itself stays completed.
+			if err := run.Cancel(now); err != nil {
+				return err
+			}
+			run.AppendTrackerStatus(run.Current().Config.Tracker, workflow.TrackerEventCancelled, run.CurrentRevision, "", "", "", now)
+			return nil
 		case "close":
 			return run.Close(now)
 		case "rewind":

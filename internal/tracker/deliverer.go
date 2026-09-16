@@ -112,6 +112,7 @@ func (d *Deliverer) deliverRun(ctx context.Context, run workflow.Run) {
 type trackerReceipt struct {
 	CommentID  string `json:"comment_id"`
 	BodyDigest string `json:"body_digest"`
+	StatusName string `json:"status_name,omitempty"`
 }
 
 func (d *Deliverer) receiptPath(runID, entryID string) string {
@@ -128,6 +129,10 @@ func (d *Deliverer) deliverOne(ctx context.Context, run workflow.Run, entry work
 	client, err := d.tracker(cfg)
 	if err != nil {
 		d.recordFailure(ctx, run.ID, entry.ID, err)
+		return
+	}
+	if entry.StatusName != "" {
+		deliverStatus(ctx, d, client, run, entry)
 		return
 	}
 	body, err := Render(&run, entry)
@@ -160,6 +165,34 @@ func (d *Deliverer) deliverOne(ctx context.Context, run workflow.Run, entry work
 		return
 	}
 	d.markPosted(ctx, run.ID, entry.ID, commentID)
+}
+
+func deliverStatus(ctx context.Context, d *Deliverer, client Tracker, run workflow.Run, entry workflow.TrackerLogEntry) {
+	updater, ok := client.(StatusUpdater)
+	if !ok {
+		d.recordFailure(ctx, run.ID, entry.ID, errors.New("tracker provider does not support status transitions"))
+		return
+	}
+	receiptPath := d.receiptPath(run.ID, entry.ID)
+	var receipt trackerReceipt
+	if load(receiptPath, &receipt) == nil && receipt.StatusName == entry.StatusName {
+		d.markPosted(ctx, run.ID, entry.ID, "")
+		return
+	}
+	ref, err := ParseRef(run.TaskRef)
+	if err != nil {
+		d.recordFailure(ctx, run.ID, entry.ID, err)
+		return
+	}
+	if err := updater.SetStatus(ctx, ref, entry.StatusName); err != nil {
+		d.recordFailure(ctx, run.ID, entry.ID, err)
+		return
+	}
+	if err := freeze(receiptPath, trackerReceipt{StatusName: entry.StatusName}); err != nil {
+		d.recordFailure(ctx, run.ID, entry.ID, err)
+		return
+	}
+	d.markPosted(ctx, run.ID, entry.ID, "")
 }
 
 // bound caps a comment body, applied after redaction (so truncation never

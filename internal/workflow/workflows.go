@@ -50,6 +50,7 @@ func (c Config) WorkflowNames() []string {
 func (c Config) SelectWorkflow(name string) (Config, error) {
 	if name == "" || name == DefaultWorkflow {
 		c.Workflows, c.WorkflowName = nil, ""
+		c = c.selectTrackerMapping(DefaultWorkflow)
 		return c, nil
 	}
 	def, ok := c.Workflows[name]
@@ -57,7 +58,22 @@ func (c Config) SelectWorkflow(name string) (Config, error) {
 		return c, fmt.Errorf("unknown workflow %q; choose one of: %s", name, strings.Join(c.WorkflowNames(), ", "))
 	}
 	c.Workflow, c.Workflows, c.WorkflowName = def, nil, name
+	c = c.selectTrackerMapping(name)
 	return c, c.Validate()
+}
+
+func (c Config) selectTrackerMapping(name string) Config {
+	if c.Tracker == nil {
+		return c
+	}
+	tracker := Clone(*c.Tracker)
+	if mapping, ok := tracker.Mapping[name]; ok {
+		tracker.Mapping = map[string]TrackerStatusMapping{name: mapping}
+	} else {
+		tracker.Mapping = nil
+	}
+	c.Tracker = &tracker
+	return c
 }
 
 // verifies reports whether a node produces check evidence an approved

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Name}} · envctl artifact</title>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/app.css">
+</head>
+<body class="artifact-page">
+<main class="artifact-shell">
+  <header class="artifact-head">
+    <a class="artifact-back" href="/">← envctl dashboard</a>
+    <h1>{{.Name}}</h1>
+    <dl class="artifact-facts">
+      <div><dt>Run</dt><dd>{{if .Run}}<a href="/#run={{.RunID}}">{{.Run}}</a>{{else}}Unknown{{end}}</dd></div>
+      <div><dt>Revision</dt><dd>{{if .Revision}}{{.Revision}}{{else}}Unknown{{end}}</dd></div>
+      <div><dt>Stage</dt><dd>{{if .Stage}}{{.Stage}}{{else}}Unknown{{end}}</dd></div>
+      <div><dt>Attempt</dt><dd>{{if .Attempt}}{{.Attempt}}{{else}}Unknown{{end}}</dd></div>
+      <div><dt>Digest</dt><dd><code>{{.Digest}}</code></dd></div>
+      <div><dt>Size</dt><dd>{{.Size}} bytes{{if .MediaType}} · {{.MediaType}}{{end}}</dd></div>
+    </dl>
+  </header>
+
+  {{if .Others}}
+  <nav class="artifact-links" aria-label="Other artifacts in this checkpoint">
+    <span>Other checkpoint artifacts:</span>
+    {{range .Others}}<a href="/artifact/{{.Digest}}">{{.Name}}</a>{{end}}
+  </nav>
+  {{end}}
+  {{if .Related}}
+  <nav class="artifact-links" aria-label="Other artifacts in this revision">
+    <span>Other stage artifacts:</span>
+    {{range .Related}}<a href="/artifact/{{.Digest}}">{{.Stage}} · {{.Name}}</a>{{end}}
+  </nav>
+  {{end}}
+
+  <section class="artifact-content">
+    {{if .Content.Truncated}}<p class="artifact-note">This view shows the first 2 MB. Export the complete verified artifact with <code>envctl run artifact {{.Digest}} --output &lt;file&gt;</code>.</p>{{end}}
+    {{range .Screenshots}}<img class="artifact-shot" src="{{.}}" alt="Screenshot recorded by a check">{{end}}
+    {{if eq .Content.Kind "markdown"}}<article class="doc">{{.HTML}}</article>
+    {{else if eq .Content.Kind "binary"}}<p class="empty">This artifact is binary. Export the complete verified bytes with <code>envctl run artifact {{.Digest}} --output &lt;file&gt;</code>.</p>
+    {{else}}<pre class="artifact-plain">{{.Content.Text}}</pre>{{end}}
+  </section>
+</main>
+</body>
+</html>

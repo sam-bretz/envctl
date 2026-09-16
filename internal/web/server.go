@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
 	"encoding/hex"
@@ -17,6 +18,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -58,6 +60,18 @@ type Server struct {
 	Now      func() time.Time
 }
 
+// Session is one loopback dashboard server. It is deliberately short-lived
+// for terminal clients: the token in its URLs is only useful while this
+// process is serving the retained state.
+type Session struct {
+	server   *http.Server
+	listener net.Listener
+	baseURL  string
+	token    string
+	done     chan error
+	cancel   context.CancelFunc
+}
+
 const cookieName = "envctl_web"
 
 var digestPattern = regexp.MustCompile(`^[0-9a-f]{40,64}$`)
@@ -86,6 +100,58 @@ func LoopbackHosts(addr net.Addr) []string {
 	return []string{"127.0.0.1:" + port, "localhost:" + port, "[::1]:" + port}
 }
 
+// Start binds a loopback-only dashboard and shuts it down with ctx. Using a
+// random port avoids collisions between several terminal sessions.
+func Start(ctx context.Context, s *Server, addr string) (*Session, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("web address: %w", err)
+	}
+	if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return nil, errors.New("web address must be a loopback address")
+	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	s.Hosts = LoopbackHosts(listener.Addr())
+	httpServer := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	serverContext, cancel := context.WithCancel(ctx)
+	session := &Session{server: httpServer, listener: listener, baseURL: "http://" + listener.Addr().String(), token: s.Token, done: make(chan error, 1), cancel: cancel}
+	go func() {
+		<-serverContext.Done()
+		shutdown, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = httpServer.Shutdown(shutdown)
+	}()
+	go func() {
+		err := httpServer.Serve(listener)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		session.done <- err
+	}()
+	return session, nil
+}
+
+func (s *Session) URL(path string) string { return s.baseURL + path }
+
+// ArtifactURL includes the one-time sign-in mechanism used by the dashboard.
+// It is safe for the browser to follow sibling links after the redirect sets
+// the HttpOnly session cookie.
+func (s *Session) ArtifactURL(digest string) string {
+	return s.URL("/artifact/" + url.PathEscape(digest) + "?token=" + url.QueryEscape(s.token))
+}
+
+// Wait returns when the listener exits. Context cancellation is the normal
+// exit and is reported as nil.
+func (s *Session) Wait() error { return <-s.done }
+
+func (s *Session) Close(ctx context.Context) error {
+	s.cancel()
+	return s.server.Shutdown(ctx)
+}
+
 func (s *Server) now() time.Time {
 	if s.Now != nil {
 		return s.Now()
@@ -104,6 +170,7 @@ func (s *Server) Handler() http.Handler {
 		files.ServeHTTP(w, r)
 	}))
 	mux.HandleFunc("GET /{$}", s.index)
+	mux.HandleFunc("GET /artifact/{digest}", s.artifactPage)
 	mux.HandleFunc("GET /api/state", s.authed(s.state))
 	mux.HandleFunc("GET /api/stream", s.authed(s.stream))
 	mux.HandleFunc("GET /api/workflows", s.authed(s.workflows))
@@ -164,6 +231,7 @@ func (s *Server) authed(next http.HandlerFunc) http.HandlerFunc {
 }
 
 var page = template.Must(template.ParseFS(assets, "assets/index.html"))
+var artifactPage = template.Must(template.ParseFS(assets, "assets/artifact.html"))
 
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	if t := r.URL.Query().Get("token"); t != "" {
@@ -184,6 +252,68 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = page.Execute(w, map[string]string{"Token": s.Token})
+}
+
+func (s *Server) artifactPage(w http.ResponseWriter, r *http.Request) {
+	if t := r.URL.Query().Get("token"); t != "" {
+		if !s.validToken(t) {
+			http.Error(w, "This link has an unknown token. Run envctl web again and open the link it prints.", http.StatusUnauthorized)
+			return
+		}
+		http.SetCookie(w, &http.Cookie{Name: cookieName, Value: s.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 30 * 24 * 3600})
+		q := r.URL.Query()
+		q.Del("token")
+		location := r.URL.Path
+		if encoded := q.Encode(); encoded != "" {
+			location += "?" + encoded
+		}
+		http.Redirect(w, r, location, http.StatusSeeOther)
+		return
+	}
+	if !s.signedIn(r) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = fmt.Fprintln(w, "Sign in by opening the link envctl web printed in your terminal.")
+		return
+	}
+	digest := r.PathValue("digest")
+	if !digestPattern.MatchString(digest) {
+		http.Error(w, "invalid artifact digest", http.StatusBadRequest)
+		return
+	}
+	runs, err := s.API.List(r.Context())
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, err)
+		return
+	}
+	meta := artifactMetadata(runs, digest)
+	raw, err := s.API.Artifact(r.Context(), digest)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if !artifactBytesMatch(digest, raw) {
+		writeError(w, http.StatusBadGateway, errors.New("artifact response failed its checksum verification"))
+		return
+	}
+	if meta.Artifact.Digest != "" && meta.Artifact.Size != int64(len(raw)) {
+		writeError(w, http.StatusInternalServerError, errors.New("retained artifact size does not match its checkpoint metadata"))
+		return
+	}
+	rendered := renderArtifact(raw, meta.Artifact.MediaType)
+	data := artifactPageData{
+		Name: meta.Artifact.Name, Run: meta.Run, RunID: meta.RunID, Revision: meta.Revision,
+		Stage: meta.Stage, Attempt: meta.Attempt, Digest: digest, Size: int64(len(raw)),
+		MediaType: meta.Artifact.MediaType, Content: rendered, HTML: template.HTML(rendered.HTML), Screenshots: screenshots(rendered.Images), Others: meta.Others, Related: meta.Related,
+	}
+	if data.Name == "" {
+		data.Name = "Artifact"
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := artifactPage.Execute(w, data); err != nil {
+		return
+	}
 }
 
 func (s *Server) snapshot(ctx context.Context) State {
@@ -422,7 +552,16 @@ func (s *Server) artifact(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
+	if !artifactBytesMatch(digest, raw) {
+		writeError(w, http.StatusBadGateway, errors.New("artifact response failed its checksum verification"))
+		return
+	}
 	writeJSON(w, renderArtifact(raw, r.URL.Query().Get("media_type")))
+}
+
+func artifactBytesMatch(digest string, raw []byte) bool {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]) == digest
 }
 
 func firstLine(s string) string {
@@ -453,4 +592,14 @@ func writeError(w http.ResponseWriter, status int, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+}
+
+// screenshots marks decoded PNG data URIs as safe for a src attribute. See
+// artifactPageData.Screenshots for why they are trustworthy.
+func screenshots(images []string) []template.URL {
+	out := make([]template.URL, 0, len(images))
+	for _, image := range images {
+		out = append(out, template.URL(image))
+	}
+	return out
 }

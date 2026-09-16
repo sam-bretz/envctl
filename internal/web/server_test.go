@@ -2,9 +2,14 @@ package web
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -217,16 +222,57 @@ func TestLanesSayWhatARunNeeds(t *testing.T) {
 }
 
 func TestArtifactsRenderWithoutActiveContent(t *testing.T) {
-	md := renderArtifact([]byte("# Plan\n\n<script>alert(1)</script>\n\n[bad](javascript:alert(1)) [good](https://example.com)\n\n| a | b |\n| - | - |\n| 1 | 2 |\n"), "text/markdown")
-	if md.Kind != "markdown" || strings.Contains(md.HTML, "<script") || strings.Contains(md.HTML, "javascript:") || !strings.Contains(md.HTML, `href="https://example.com"`) || !strings.Contains(md.HTML, "<table>") {
+	md := renderArtifact([]byte("# Plan\n\n<script>alert(1)</script>\n\n[bad](javascript:alert(1)) [good](https://example.com)\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n```go\nfunc main() { return }\n```\n"), "text/markdown")
+	if md.Kind != "markdown" || strings.Contains(md.HTML, "<script") || strings.Contains(md.HTML, "javascript:") || !strings.Contains(md.HTML, `href="https://example.com"`) || !strings.Contains(md.HTML, "<table>") || !strings.Contains(md.HTML, `class="tok-keyword"`) {
 		t.Fatalf("markdown rendered unsafely or incompletely: %s", md.HTML)
 	}
 	js := renderArtifact([]byte(`{"steps":[{"screenshot_png":"iVBORw0KGgo="}]}`), "application/json")
-	if js.Kind != "json" || len(js.Images) != 1 || !strings.HasPrefix(js.Images[0], "data:image/png;base64,") || strings.Contains(js.Text, "iVBOR") {
+	if js.Kind != "json" || len(js.Images) != 1 || !strings.HasPrefix(js.Images[0], "data:image/png;base64,") || strings.Contains(js.Text, "iVBOR") || strings.Contains(js.Text, "screenshot_png") {
 		t.Fatalf("screenshot not extracted: %+v", js)
+	}
+	if text := renderArtifact([]byte("wide plain text\n"), "text/plain"); text.Kind != "text" || text.Text != "wide plain text\n" {
+		t.Fatalf("plain text was not retained: %+v", text)
 	}
 	if bin := renderArtifact([]byte{0xff, 0xfe, 0x00}, ""); bin.Kind != "binary" {
 		t.Fatalf("binary artifact kind %q", bin.Kind)
+	}
+}
+
+func TestArtifactPageShowsProvenanceAndLinksSiblingArtifacts(t *testing.T) {
+	_, api, h := fixture(t)
+	primary := []byte("# Plan\n\nThe retained plan.\n")
+	second := workflow.Artifact{Name: "design.md", Digest: strings.Repeat("b", 64), Size: 4, MediaType: "text/markdown"}
+	stageArtifact := workflow.Artifact{Name: "test-results.md", Digest: strings.Repeat("c", 64), Size: 5, MediaType: "text/markdown"}
+	sum := sha256.Sum256(primary)
+	digest := hex.EncodeToString(sum[:])
+	first := workflow.Artifact{Name: "plan.md", Digest: digest, Size: int64(len(primary)), MediaType: "text/markdown"}
+	c, err := workflow.Parse([]byte(config))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := run(t, c)
+	r.Current().Checkpoints["plan"] = workflow.Checkpoint{Node: "plan", Attempt: "attempt_7", Result: workflow.Result{Artifacts: []workflow.Artifact{first, second}}}
+	r.Current().Checkpoints["qa"] = workflow.Checkpoint{Node: "qa", Attempt: "attempt_8", Result: workflow.Result{Artifacts: []workflow.Artifact{stageArtifact}}}
+	api.raw, api.runs = primary, []workflow.Run{*r}
+	redirect := serve(h, request("GET", "/artifact/"+digest+"?token="+testToken, "", false, nil))
+	if redirect.Code != http.StatusSeeOther || len(redirect.Result().Cookies()) != 1 {
+		t.Fatalf("artifact sign-in redirect: %d %s", redirect.Code, redirect.Body)
+	}
+	pageReq := request("GET", "/artifact/"+digest, "", false, nil)
+	pageReq.AddCookie(redirect.Result().Cookies()[0])
+	page := serve(h, pageReq)
+	body := page.Body.String()
+	for _, want := range []string{"plan.md", r.Name, r.CurrentRevision, "plan", "attempt_7", digest, fmt.Sprintf("%d bytes", len(primary)), "design.md", "/artifact/" + second.Digest, "qa · test-results.md", "/artifact/" + stageArtifact.Digest, "The retained plan."} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("artifact page missing %q:\n%s", want, body)
+		}
+	}
+	if page.Code != http.StatusOK || page.Header().Get("Content-Security-Policy") == "" || strings.Contains(body, "<script>alert") {
+		t.Fatalf("unsafe or invalid artifact page: %d", page.Code)
+	}
+	api.raw = []byte("tampered")
+	if mismatch := serve(h, pageReq); mismatch.Code != http.StatusBadGateway {
+		t.Fatalf("checksum mismatch was rendered: %d %s", mismatch.Code, mismatch.Body)
 	}
 }
 
@@ -276,5 +322,29 @@ func TestStreamSendsStateOnlyWhenItChanges(t *testing.T) {
 			}
 			return
 		}
+	}
+}
+
+func TestAScreenshotReachesThePageAsAnImageNotAPlaceholder(t *testing.T) {
+	// html/template rewrites a data: URI in a src attribute to #ZgotmplZ
+	// unless it is typed as a URL, which silently renders every screenshot
+	// broken. Assert on the page, not just on the extracted list.
+	png := []byte{137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13}
+	encoded := base64.StdEncoding.EncodeToString(png)
+	rendered := renderArtifact([]byte(`{"screenshot_png":"`+encoded+`"}`), "application/json")
+	if len(rendered.Images) != 1 {
+		t.Fatalf("screenshot not extracted: %+v", rendered)
+	}
+
+	var page bytes.Buffer
+	data := artifactPageData{Name: "check", Content: rendered, Screenshots: screenshots(rendered.Images)}
+	if err := artifactPage.Execute(&page, data); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(page.String(), "ZgotmplZ") {
+		t.Fatalf("the screenshot was neutered by the template:\n%s", page.String())
+	}
+	if !strings.Contains(page.String(), "data:image/png;base64,"+encoded) {
+		t.Fatalf("the screenshot is not in the page:\n%s", page.String())
 	}
 }

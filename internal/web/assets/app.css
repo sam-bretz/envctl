@@ -338,6 +338,29 @@ a.issue:hover { color: var(--accent); text-decoration: none; }
 .plain { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100ch; }
 .shots img { max-width: 100%; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 14px; }
 
+/* Standalone artifact pages use the same local, preference-aware palette as
+   the dashboard but keep the document readable at full browser width. */
+.artifact-shell { max-width: 1040px; margin: 0 auto; padding: 34px 32px 80px; }
+.artifact-head { border-bottom: 1px solid var(--line); padding-bottom: 22px; }
+.artifact-back { display: inline-block; margin-bottom: 22px; font-size: 13px; }
+.artifact-head h1 { font-size: 28px; overflow-wrap: anywhere; }
+.artifact-facts { display: flex; flex-wrap: wrap; gap: 10px 28px; margin: 18px 0 0; }
+.artifact-facts div { min-width: 170px; }
+.artifact-facts dt { color: var(--ink-3); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+.artifact-facts dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.artifact-facts code { font-size: 11px; }
+.artifact-links { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; padding: 16px 0; border-bottom: 1px solid var(--line); color: var(--ink-3); font-size: 13px; }
+.artifact-links a { white-space: nowrap; }
+.artifact-content { padding-top: 30px; }
+.artifact-note { max-width: 68ch; margin: 0 auto 22px; color: var(--ink-2); font-size: 13px; }
+.artifact-plain { max-width: 110ch; margin: 0 auto; font-family: var(--mono); font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.artifact-shot { display: block; max-width: min(100%, 1000px); margin: 0 auto 18px; border: 1px solid var(--line); border-radius: 8px; }
+.tok-keyword { color: var(--accent); font-weight: 600; }
+.tok-string { color: var(--ok); }
+.tok-comment { color: var(--ink-3); font-style: italic; }
+.tok-number { color: var(--needs); }
+@media (max-width: 680px) { .artifact-shell { padding: 22px 18px 60px; } .artifact-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; } .artifact-facts div { min-width: 0; } }
+
 /* Dialog */
 dialog { border: 0; border-radius: 14px; background: var(--surface); color: var(--ink); padding: 0; width: min(560px, calc(100% - 32px)); box-shadow: var(--shadow), 0 0 0 1px var(--line); }
 dialog::backdrop { background: rgba(15, 18, 24, 0.36); }

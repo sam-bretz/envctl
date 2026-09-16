@@ -31,6 +31,8 @@ func Render(run *workflow.Run, entry workflow.TrackerLogEntry) (string, error) {
 		return fmt.Sprintf("New revision `%s`. %s", entry.Revision, entry.Detail), nil
 	case workflow.TrackerKindNeedsAttention:
 		return "Needs attention: " + entry.Detail, nil
+	case workflow.TrackerKindPublished:
+		return renderPublished(rev, entry)
 	default:
 		return "", fmt.Errorf("unknown tracker log entry kind %q", entry.Kind)
 	}
@@ -138,6 +140,29 @@ func renderApproved(rev *workflow.Revision, entry workflow.TrackerLogEntry) (str
 		return "", errors.New("tracker log entry references an attempt with no approval")
 	}
 	return fmt.Sprintf("Stage %s (attempt %d) was approved by %s.", entry.Node, att.Number, att.Approval.Actor), nil
+}
+
+// renderPublished names the pull requests a change stage opened, one line per
+// repository so a run spanning several is readable.
+func renderPublished(rev *workflow.Revision, entry workflow.TrackerLogEntry) (string, error) {
+	cp, ok := rev.Checkpoints[entry.Node]
+	if !ok {
+		return "", fmt.Errorf("tracker log entry references unknown checkpoint %s", entry.Node)
+	}
+	prs := cp.Result.PRs
+	if len(prs) == 0 {
+		return "", fmt.Errorf("published entry for %s has no pull request", entry.Node)
+	}
+	ids := sortedKeys(prs)
+	if len(ids) == 1 {
+		return fmt.Sprintf("Pull request opened for **%s**: %s", entry.Node, prs[ids[0]]), nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Pull requests opened for **%s**:\n", entry.Node)
+	for _, id := range ids {
+		fmt.Fprintf(&b, "- `%s`: %s\n", id, prs[id])
+	}
+	return strings.TrimRight(b.String(), "\n"), nil
 }
 
 func sortedKeys(m map[string]string) []string {

@@ -80,6 +80,9 @@ const (
 	TrackerKindApproved         = "approved"
 	TrackerKindRewound          = "rewound"
 	TrackerKindNeedsAttention   = "needs_attention"
+	// TrackerKindPublished records the pull requests a change stage opened, so
+	// the issue carries the link to the work without anyone opening envctl.
+	TrackerKindPublished = "published"
 )
 
 // AppendTrackerLog is the single enqueue point for every captain's-log event.

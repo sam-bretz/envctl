@@ -181,3 +181,42 @@ func TestRenderRewoundAndNeedsAttention(t *testing.T) {
 		t.Fatalf("unexpected needs_attention body: %q, %v", body, err)
 	}
 }
+
+func TestThePullRequestIsItsOwnLogEntry(t *testing.T) {
+	run, rev := renderFixture(t)
+	// Craft the change checkpoint directly rather than threading the DAG; the
+	// entry only needs the published result.
+	set := func(prs map[string]string) {
+		rev.Checkpoints["approved-change"] = workflow.Checkpoint{
+			ID: "cp_change", Node: "approved-change", Attempt: "attempt_change",
+			Result: workflow.Result{Summary: "Opened the change", PRs: prs},
+		}
+	}
+	set(map[string]string{"app": "https://github.com/o/r/pull/7"})
+
+	entry := workflow.TrackerLogEntry{Kind: workflow.TrackerKindPublished, Revision: rev.ID, Node: "approved-change"}
+	body, err := Render(run, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, "https://github.com/o/r/pull/7") {
+		t.Fatalf("the PR URL is the point of this entry: %q", body)
+	}
+
+	// A run spanning repositories names each one.
+	set(map[string]string{"app": "https://github.com/o/r/pull/7", "web": "https://github.com/o/w/pull/3"})
+	if body, err = Render(run, entry); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"`app`", "`web`", "pull/7", "pull/3"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %s in:\n%s", want, body)
+		}
+	}
+
+	// Nothing published is a bug in the caller, not an empty comment.
+	set(nil)
+	if _, err = Render(run, entry); err == nil {
+		t.Fatal("rendered a published entry with no pull request")
+	}
+}

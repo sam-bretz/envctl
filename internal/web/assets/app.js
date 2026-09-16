@@ -56,6 +56,14 @@
   const bytes = (n) => (n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} bytes`);
   const sha = (s) => (s ? s.slice(0, 7) : '');
   const model = (m) => m || 'harness default';
+  // stageModel prefers the model a role actually ran over the one configured
+  // for it: "harness default" never answered which model that turned out to
+  // be, and an alias never showed the version behind it.
+  const stageModel = (configured, ran) => {
+    if (!ran) return model(configured);
+    if (!configured) return `${ran} (harness default)`;
+    return ran === configured ? ran : `${ran} (configured ${configured})`;
+  };
   const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n));
   const usageTokens = (u) => (u.input || 0) + (u.cache_write || 0) + (u.cache_read || 0) + (u.output || 0);
   // issueLink names a run's linked issue the way its tracker does: a Linear
@@ -615,7 +623,8 @@
     const push = (at, el) => items.push({ at: at || '', el });
     for (const a of stage.attempts) {
       const models = a.models || {};
-      const modelText = models.worker || models.supervisor ? ` with ${model(models.worker)}` : '';
+      const ran = [models.worker && `worker on ${models.worker}`, models.supervisor && `supervisor on ${models.supervisor}`].filter(Boolean);
+      const modelText = ran.length ? ` (${ran.join(', ')})` : '';
       push(a.started_at, h('div', { class: 'event' }, h('span', {}, `Attempt ${a.number} started${modelText} `, timeEl(a.started_at))));
       const p = a.progress;
       if (a.state === 'running') {
@@ -878,8 +887,8 @@
         path, h('button', { type: 'submit', class: 'btn btn-small', text: 'Attach' })));
 
     const stageFacts = stage ? h('section', {}, h('h3', { text: `${stage.id} settings` }), h('dl', { class: 'facts' },
-      h('dt', { text: 'Worker' }), h('dd', { text: model(stage.models.worker) }),
-      h('dt', { text: 'Supervisor' }), h('dd', { text: model(stage.models.supervisor) }),
+      h('dt', { text: 'Worker' }), h('dd', { text: stageModel(stage.models.worker, stage.models.ran_worker) }),
+      h('dt', { text: 'Supervisor' }), h('dd', { text: stageModel(stage.models.supervisor, stage.models.ran_supervisor) }),
       h('dt', { text: 'Attempts' }), h('dd', { text: `${stage.limits.attempts} of ${stage.limits.max_attempts}` }),
       h('dt', { text: 'Time limit' }), h('dd', { text: `${duration(stage.limits.attempt_seconds)} each` }),
       h('dt', { text: 'Nudged after' }), h('dd', { text: `${duration(stage.limits.stall_seconds)} silent` }))) : null;

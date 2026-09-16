@@ -85,3 +85,21 @@ func TestInvocationEnvironmentIsScopedToEnvctlValues(t *testing.T) {
 		}
 	}
 }
+
+func TestClaudeReportsTheModelItResolvedForItself(t *testing.T) {
+	// An invocation with no --model still says which model it ran, on the
+	// same init event the session comes from.
+	stream := `{"type":"system","subtype":"init","session_id":"01a08f59-7073-7a83-b959-867ca896ce48","model":"claude-sonnet-5-20260115"}
+{"type":"assistant"}`
+	c := Claude{}
+	if got := c.Model(stream); got != "claude-sonnet-5-20260115" {
+		t.Fatalf("model not read from the init event: %q", got)
+	}
+	if got := c.Session(stream); got != "01a08f59-7073-7a83-b959-867ca896ce48" {
+		t.Fatalf("reading the model broke the session: %q", got)
+	}
+	// A stream that never says leaves the surfaces on the configured value.
+	if got := c.Model(`{"type":"assistant"}`); got != "" {
+		t.Fatalf("invented a model: %q", got)
+	}
+}

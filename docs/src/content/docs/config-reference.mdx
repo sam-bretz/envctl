@@ -162,6 +162,24 @@ harness's own default (no `--model` flag).
 Readiness probes for `harness.worker`/`harness.supervisor` always use the
 run-wide model, since a connection probe has no stage in scope.
 
+### Which model actually ran
+
+A role with no configured model is invoked without `--model`, and the harness
+chooses for itself, so the configuration cannot say what it used. Each attempt
+therefore records what its harness reports running, and the TUI stage view,
+the dashboard stage panel and the run timeline show that in preference to the
+configured value:
+
+| Configured | Reported | Shown |
+| --- | --- | --- |
+| unset | `claude-sonnet-5-20260115` | `claude-sonnet-5-20260115 (harness default)` |
+| `sonnet` | `claude-sonnet-5-20260115` | `claude-sonnet-5-20260115 (configured sonnet)` |
+| `opus` | `opus` | `opus` |
+| `opus` | nothing reported | `opus` |
+
+Claude reports its model on the `init` event of its stream. A harness that
+reports nothing leaves the configured value showing, rather than a guess.
+
 `envctl run show` and `envctl run readiness` print each node's effective
 worker and supervisor model next to its attempt budget.
 

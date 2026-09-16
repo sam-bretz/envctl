@@ -48,3 +48,25 @@ func TestConversationModelLineCoexistsWithAttemptDetail(t *testing.T) {
 		t.Fatalf("conversation lost either the model line or the attempt detail:\n%s", view)
 	}
 }
+
+func TestTheStageViewNamesTheModelThatActuallyRan(t *testing.T) {
+	// The whole point: "harness default" never said which model that was.
+	if got := stageModelTUI("", "claude-sonnet-5-20260115"); got != "claude-sonnet-5-20260115 (harness default)" {
+		t.Fatalf("unconfigured role: %q", got)
+	}
+	// An alias shows the version behind it.
+	if got := stageModelTUI("sonnet", "claude-sonnet-5-20260115"); got != "claude-sonnet-5-20260115 (configured sonnet)" {
+		t.Fatalf("alias: %q", got)
+	}
+	// Agreement is not worth two names.
+	if got := stageModelTUI("opus", "opus"); got != "opus" {
+		t.Fatalf("agreement: %q", got)
+	}
+	// Nothing reported falls back rather than inventing.
+	if got := stageModelTUI("", ""); got != "harness default" {
+		t.Fatalf("nothing known: %q", got)
+	}
+	if got := stageModelTUI("opus", ""); got != "opus" {
+		t.Fatalf("configured only: %q", got)
+	}
+}

@@ -348,3 +348,35 @@ func TestAScreenshotReachesThePageAsAnImageNotAPlaceholder(t *testing.T) {
 		t.Fatalf("the screenshot is not in the page:\n%s", page.String())
 	}
 }
+
+func TestTheStagePanelReportsTheModelAnAttemptActuallyRan(t *testing.T) {
+	c, err := workflow.Parse([]byte(config))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := run(t, c)
+	rev := r.Current()
+	// Nothing is configured for task, so the configuration cannot say which
+	// model it used; the harness reporting one is the only source.
+	rev.Attempts = append(rev.Attempts, workflow.Attempt{
+		ID: "attempt_1", Node: "task", Number: 1, State: "running",
+		Models: map[string]string{"worker": "claude-sonnet-5-20260115"},
+	})
+
+	view := runView(*r, time.Now())
+	var stage StageView
+	for _, s := range view.Revisions[0].Stages {
+		if s.ID == "task" {
+			stage = s
+		}
+	}
+	if stage.Models.Worker != "" {
+		t.Fatalf("task has a configured worker model: %q", stage.Models.Worker)
+	}
+	if stage.Models.RanWorker != "claude-sonnet-5-20260115" {
+		t.Fatalf("the model that ran is not reported: %+v", stage.Models)
+	}
+	if stage.Models.RanSupervisor != "" {
+		t.Fatalf("invented a supervisor model: %q", stage.Models.RanSupervisor)
+	}
+}

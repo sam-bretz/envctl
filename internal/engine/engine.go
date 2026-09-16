@@ -32,6 +32,9 @@ type Observation struct {
 	Result  *workflow.Result
 	Detail  string // already redacted by the backend
 	Session string // explicit harness session identity for durable continuation
+	// Models is the model each role's harness reported running, by role. It
+	// is what actually ran, as opposed to what the configuration asked for.
+	Models map[string]string
 	// Progress and Delivered are display state for running attempts. Delivered
 	// lists user messages already submitted to an agent invocation.
 	Progress  *workflow.Progress

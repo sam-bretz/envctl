@@ -44,6 +44,10 @@ type attemptRecord struct {
 	Steering          []workflow.Delivery  `json:"steering,omitempty"`
 	Live              map[string]*liveRole `json:"live,omitempty"`
 	SupervisorSession string               `json:"supervisor_session,omitempty"`
+	// Models is the model each role's harness reported running, by role. It
+	// records what an invocation with no configured model resolved to, which
+	// the configuration cannot say.
+	Models map[string]string `json:"models,omitempty"`
 	// Stall is the durable no-output watch per agent role.
 	Stall map[string]*stallState `json:"stall,omitempty"`
 }
@@ -426,6 +430,12 @@ func (b *Backend) pollJob(ctx context.Context, a engine.Assignment, r *attemptRe
 			} else {
 				r.Session = harness.Session(r.Logs[id])
 			}
+			if model := harness.Model(r.Logs[id]); model != "" {
+				if r.Models == nil {
+					r.Models = map[string]string{}
+				}
+				r.Models[role] = model
+			}
 		}
 		if err = b.save(a, r); err != nil {
 			return status, err
@@ -446,7 +456,7 @@ func (b *Backend) failed(a engine.Assignment, r *attemptRecord, detail string) (
 	if err := b.save(a, r); err != nil {
 		return engine.Observation{}, err
 	}
-	return engine.Observation{State: "failed", Detail: detail, Session: r.Session, Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
+	return engine.Observation{State: "failed", Detail: detail, Session: r.Session, Models: r.Models, Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
 }
 
 func (b *Backend) workerFailed(ctx context.Context, a engine.Assignment, r *attemptRecord, detail string) (engine.Observation, error) {
@@ -524,7 +534,7 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 		return engine.Observation{}, err
 	}
 	running := func() (engine.Observation, error) {
-		return engine.Observation{State: "running", Session: r.Session, Progress: b.progress(a, r), Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
+		return engine.Observation{State: "running", Session: r.Session, Models: r.Models, Progress: b.progress(a, r), Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
 	}
 	// agentJob reconciles one role's active generation: it finishes stopping a
 	// superseded generation, starts a missing job, records delivery once the
@@ -822,11 +832,11 @@ func (b *Backend) Poll(ctx context.Context, a engine.Assignment) (engine.Observa
 		if err = b.save(a, r); err != nil {
 			return engine.Observation{}, err
 		}
-		return engine.Observation{State: "completed", Result: &r.Result, Session: r.Session, Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
+		return engine.Observation{State: "completed", Result: &r.Result, Session: r.Session, Models: r.Models, Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
 	case "completed":
-		return engine.Observation{State: "completed", Result: &r.Result, Session: r.Session, Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
+		return engine.Observation{State: "completed", Result: &r.Result, Session: r.Session, Models: r.Models, Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
 	case "failed":
-		return engine.Observation{State: "failed", Detail: r.Detail, Session: r.Session, Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
+		return engine.Observation{State: "failed", Detail: r.Detail, Session: r.Session, Models: r.Models, Delivered: r.delivered(), Usage: b.usage(a, r)}, nil
 	default:
 		return engine.Observation{}, errors.New("unknown durable attempt phase")
 	}

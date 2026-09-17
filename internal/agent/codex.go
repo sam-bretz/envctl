@@ -341,6 +341,22 @@ func (b *limitBuffer) Write(p []byte) (int, error) {
 	return b.data.Write(p)
 }
 
+// Model reports the model an event stream says it ran. Codex's documented
+// events carry no model, so this finds one only if a stream reports it under
+// the usual key; an empty result leaves the surfaces showing the configured
+// model rather than a guess.
+func Model(stream string) string {
+	for _, line := range strings.Split(stream, "\n") {
+		var event struct {
+			Model string `json:"model"`
+		}
+		if json.Unmarshal([]byte(line), &event) == nil && event.Model != "" {
+			return event.Model
+		}
+	}
+	return ""
+}
+
 // Session extracts the explicit session identity from Codex's structured stream.
 // It never selects the globally most recent conversation when resuming.
 func Session(stream string) string {

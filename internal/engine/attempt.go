@@ -131,6 +131,17 @@ func (e *Engine) reconcileAttempt(ctx context.Context, run *workflow.Run, rev *w
 			})
 			return true, err
 		}
+		if models := newModels(a.Models, observation.Models); len(models) > 0 {
+			_, err = e.update(ctx, id, revision, "attempt.models", func(_ *workflow.Run, v *workflow.Revision) error {
+				current := v.Attempt(a.ID)
+				if current == nil {
+					return workflow.ErrConflict
+				}
+				current.Models = models
+				return nil
+			})
+			return true, err
+		}
 		if observation.Session != "" && a.Session != observation.Session {
 			_, err = e.update(ctx, id, revision, "attempt.session", func(_ *workflow.Run, v *workflow.Revision) error {
 				current := v.Attempt(a.ID)
@@ -225,4 +236,26 @@ func (e *Engine) reconcileAttempt(ctx context.Context, run *workflow.Run, rev *w
 		return true, err
 	}
 	return false, nil
+}
+
+// newModels merges what a harness reported running over what an attempt
+// recorded from configuration, returning nil when nothing changed. A reported
+// model is the more precise of the two: it names what an unset role resolved
+// to, and the exact version behind an alias.
+func newModels(recorded, reported map[string]string) map[string]string {
+	changed := false
+	merged := map[string]string{}
+	for role, model := range recorded {
+		merged[role] = model
+	}
+	for role, model := range reported {
+		if model != "" && merged[role] != model {
+			merged[role] = model
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return merged
 }

@@ -157,17 +157,39 @@ func (c Claude) Result(ctx context.Context, id string) (json.RawMessage, error) 
 	return readResult(ctx, c.Guest, id)
 }
 func (c Claude) Session(stream string) string {
+	session, _ := claudeInit(stream)
+	return session
+}
+
+// Model reports the model Claude reports on the init event, which is the one
+// it resolved for itself when the invocation named none.
+func (c Claude) Model(stream string) string {
+	_, model := claudeInit(stream)
+	return model
+}
+
+// claudeInit reads the session and model out of the stream's init event, the
+// first event Claude emits.
+func claudeInit(stream string) (session, model string) {
 	for _, line := range strings.Split(stream, "\n") {
 		var event struct {
 			Type    string `json:"type"`
 			Subtype string `json:"subtype"`
 			Session string `json:"session_id"`
+			Model   string `json:"model"`
 		}
-		if json.Unmarshal([]byte(line), &event) == nil && event.Type == "system" && event.Subtype == "init" && sessionID.MatchString(event.Session) {
-			return event.Session
+		if json.Unmarshal([]byte(line), &event) != nil || event.Type != "system" || event.Subtype != "init" {
+			continue
+		}
+		if sessionID.MatchString(event.Session) {
+			session = event.Session
+		}
+		model = event.Model
+		if session != "" {
+			return session, model
 		}
 	}
-	return ""
+	return session, model
 }
 
 // Preserve the native event stream for progress/reconnect. Only a successful

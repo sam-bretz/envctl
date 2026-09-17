@@ -119,10 +119,15 @@ type LimitView struct {
 	StallSeconds   int `json:"stall_seconds"`
 }
 
-// ModelView names each role's effective model; empty is the harness default.
+// ModelView names each role's model. Worker and Supervisor are what the
+// configuration asks for, empty meaning the harness default; RanWorker and
+// RanSupervisor are what the latest attempt's harness reported actually
+// running, which is the only place an unconfigured role's model is known.
 type ModelView struct {
-	Worker     string `json:"worker"`
-	Supervisor string `json:"supervisor"`
+	Worker        string `json:"worker"`
+	Supervisor    string `json:"supervisor"`
+	RanWorker     string `json:"ran_worker,omitempty"`
+	RanSupervisor string `json:"ran_supervisor,omitempty"`
 }
 
 // AwaitingView is the exact result a person approves.
@@ -277,6 +282,9 @@ func revisionView(v *workflow.Revision, current bool, now time.Time) RevisionVie
 				continue
 			}
 			s.Attempts = append(s.Attempts, a)
+			if len(a.Models) > 0 {
+				s.Models.RanWorker, s.Models.RanSupervisor = a.Models["worker"], a.Models["supervisor"]
+			}
 			s.Limits.Attempts++
 			if a.State == "awaiting-approval" && a.Result != nil {
 				s.Awaiting = &AwaitingView{Attempt: a.ID, WorkDigest: a.Result.WorkDigest(), Result: *a.Result}

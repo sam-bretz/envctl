@@ -16,6 +16,11 @@ type Harness interface {
 	Start(context.Context, Invocation, Credential) (guestjob.Status, error)
 	Result(context.Context, string) (json.RawMessage, error)
 	Session(string) string
+	// Model reports the model the harness actually ran, read from its own
+	// event stream. An invocation with no model names one the harness chose,
+	// which the configuration never records; empty means the stream did not
+	// say.
+	Model(string) string
 	// Activity summarizes the native event stream for live progress display.
 	Activity(string) []string
 	// Usage sums the model usage the native event stream reports.
@@ -52,3 +57,4 @@ func ResolveCredential(root, kind, reference string) (Credential, error) {
 }
 
 func (c Codex) Session(stream string) string { return Session(stream) }
+func (c Codex) Model(stream string) string   { return Model(stream) }

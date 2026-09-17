@@ -901,7 +901,8 @@ func (m Model) details() string {
 	switch panels[m.Panel] {
 	case "Conversation":
 		agents := rev.Config.NodeAgents(node)
-		lines := []string{fmt.Sprintf("Worker model: %s · Supervisor model: %s", formatModelTUI(agents.Worker.Model), formatModelTUI(agents.Supervisor.Model))}
+		ran := ranModels(rev, node)
+		lines := []string{fmt.Sprintf("Worker model: %s · Supervisor model: %s", stageModelTUI(agents.Worker.Model, ran["worker"]), stageModelTUI(agents.Supervisor.Model, ran["supervisor"]))}
 		for _, a := range rev.Attempts {
 			if a.Node == node {
 				lines = append(lines, fmt.Sprintf("Worker attempt %d: %s", a.Number, a.State))
@@ -1013,6 +1014,33 @@ func formatModelTUI(model string) string {
 		return "harness default"
 	}
 	return model
+}
+
+// ranModels is what a node's latest attempt reported actually running, which
+// names the model an unconfigured role resolved to.
+func ranModels(rev *workflow.Revision, node string) map[string]string {
+	out := map[string]string{}
+	for _, a := range rev.Attempts {
+		if a.Node == node && len(a.Models) > 0 {
+			out = a.Models
+		}
+	}
+	return out
+}
+
+// stageModelTUI prefers what a role actually ran over what was configured for
+// it, and says so when the two differ, because "harness default" on its own
+// never answered which model that was.
+func stageModelTUI(configured, ran string) string {
+	switch {
+	case ran == "":
+		return formatModelTUI(configured)
+	case configured == "":
+		return ran + " (harness default)"
+	case ran != configured:
+		return ran + " (configured " + configured + ")"
+	}
+	return ran
 }
 func pretty(v any) string {
 	b, err := json.MarshalIndent(v, "", "  ")

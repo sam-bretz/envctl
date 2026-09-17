@@ -12,10 +12,19 @@ import (
 // every state the dashboard derives already computed.
 
 type State struct {
-	Root  string    `json:"root"`
-	Runs  []RunView `json:"runs"`
-	Error string    `json:"error,omitempty"`
-	At    time.Time `json:"at"`
+	Root     string       `json:"root"`
+	Manifest ManifestView `json:"manifest"`
+	Runs     []RunView    `json:"runs"`
+	Error    string       `json:"error,omitempty"`
+	At       time.Time    `json:"at"`
+}
+
+// ManifestView gives the dashboard enough context to make an unconfigured
+// repository recoverable without exposing the workflow configuration itself.
+type ManifestView struct {
+	Present bool   `json:"present"`
+	Valid   bool   `json:"valid"`
+	Error   string `json:"error,omitempty"`
 }
 
 type RunView struct {

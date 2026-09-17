@@ -123,6 +123,17 @@ func TestOnlyThisMachineWithTheTokenCanUseTheDashboard(t *testing.T) {
 	}
 }
 
+func TestStateReportsMissingManifestForDashboardSetup(t *testing.T) {
+	s, _, _ := fixture(t)
+	if err := os.Remove(filepath.Join(s.Root, "envctl.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	st := s.snapshot(context.Background())
+	if st.Manifest.Present || st.Manifest.Valid {
+		t.Fatalf("missing manifest was not reported: %+v", st.Manifest)
+	}
+}
+
 func TestCreateSelectsTheWorkflowAndActionsKeepTheShownVersion(t *testing.T) {
 	_, api, h := fixture(t)
 	headers := map[string]string{"Content-Type": "application/json", "X-Envctl-Token": testToken}

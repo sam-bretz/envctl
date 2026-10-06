@@ -319,7 +319,7 @@ func (s *Server) artifactPage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) snapshot(ctx context.Context) State {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	st := State{Root: s.Root, Runs: []RunView{}, At: s.now()}
+	st := State{Root: s.Root, Manifest: s.manifest(), Runs: []RunView{}, At: s.now()}
 	runs, err := s.API.List(ctx)
 	if err != nil {
 		st.Error = "The coordinator is not answering: " + err.Error()
@@ -329,6 +329,17 @@ func (s *Server) snapshot(ctx context.Context) State {
 		st.Runs = append(st.Runs, runView(r, s.now()))
 	}
 	return st
+}
+
+func (s *Server) manifest() ManifestView {
+	_, err := workflow.Load(s.Root)
+	if err == nil {
+		return ManifestView{Present: true, Valid: true}
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return ManifestView{}
+	}
+	return ManifestView{Present: true, Error: err.Error()}
 }
 
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {

@@ -56,6 +56,8 @@
   const bytes = (n) => (n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} bytes`);
   const sha = (s) => (s ? s.slice(0, 7) : '');
   const model = (m) => m || 'harness default';
+  const SETUP_GUIDE = 'https://sam-bretz.github.io/envctl/first-workflow/';
+  const INIT_COMMAND = 'envctl init --project <prefix>';
   // stageModel prefers the model a role actually ran over the one configured
   // for it: "harness default" never answered which model that turned out to
   // be, and an alias never showed the version behind it.
@@ -476,6 +478,8 @@
   function renderSide() {
     const st = ui.state;
     $('root').textContent = st ? st.root.replace(/^\/Users\/[^/]+/, '~') : '';
+    const needsSetup = st && st.manifest && (!st.manifest.present || !st.manifest.valid);
+    $('new-run').disabled = !!needsSetup;
     const link = $('link');
     link.className = 'link';
     if (ui.link === 'ok' && st && !st.error) link.textContent = 'Live';
@@ -487,6 +491,13 @@
       const items = ordered().filter((r) => r.lane === lane);
       if (!items.length) continue;
       groups.push(h('section', { class: 'group' }, h('h2', {}, title, h('span', { text: String(items.length) })), items.map(runRow)));
+    }
+    if (needsSetup) {
+      const invalid = st.manifest.present && !st.manifest.valid;
+      groups.unshift(h('div', { class: 'setup-callout' },
+        h('strong', { text: invalid ? 'Fix envctl.yaml to start runs' : 'Add envctl.yaml to start runs' }),
+        h('p', { text: invalid ? 'The workflow configuration needs attention.' : 'This repository has no workflow configuration yet.' }),
+        h('a', { href: SETUP_GUIDE, target: '_blank', rel: 'noopener noreferrer', text: 'Read the setup guide' })));
     }
     if (!groups.length) groups.push(h('p', { class: 'empty-list', text: st ? 'No runs yet.' : 'Loading…' }));
     $('runs').replaceChildren(...groups);
@@ -533,10 +544,29 @@
     const st = ui.state;
     if (st && st.error) return h('div', { class: 'welcome' }, h('h1', { text: 'The coordinator is offline' }), h('p', { text: 'Start it with envctl daemon serve, or run any envctl run command. This page reconnects on its own.' }));
     if (!st) return h('div', { class: 'welcome' }, h('p', { text: 'Connecting to envctl…' }));
+    if (st.manifest && !st.manifest.present) return setupWelcome('Add envctl.yaml to start runs', 'envctl needs a workflow configuration at the root of this repository.');
+    if (st.manifest && !st.manifest.valid) return setupWelcome('Fix envctl.yaml to start runs', st.manifest.error || 'The workflow configuration could not be loaded.');
     return h('div', { class: 'welcome' },
       h('h1', { text: 'Start your first run' }),
       h('p', { text: 'Describe a change. Agents plan, build and check it in their own VM, and ask you before anything is published.' }),
       h('button', { type: 'button', class: 'btn btn-primary', text: 'New run', onclick: newRunDialog }));
+  }
+
+  function setupWelcome(title, detail) {
+    return h('div', { class: 'welcome setup-welcome' },
+      h('h1', { text: title }),
+      h('p', { text: detail }),
+      h('p', {}, h('code', { text: INIT_COMMAND })),
+      h('div', { class: 'buttons' },
+        h('a', { class: 'btn btn-primary', href: SETUP_GUIDE, target: '_blank', rel: 'noopener noreferrer', text: 'Open setup guide' }),
+        h('button', { type: 'button', class: 'btn btn-quiet', text: 'Copy init command', onclick: async () => {
+          try {
+            await navigator.clipboard.writeText(INIT_COMMAND);
+            say('Copied the init command. Run it from this repository.');
+          } catch {
+            say(`Run this from the repository: ${INIT_COMMAND}`);
+          }
+        } })));
   }
 
   function renderHistoryNote(run, rev) {
